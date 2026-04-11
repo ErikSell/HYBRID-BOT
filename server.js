@@ -31,3 +31,13 @@ app.post("/webhook", async (req, res) => {
 });
 
 app.listen(3000, () => console.log("🚀 Bot läuft auf Port 3000"));
+
+app.post("/test", (req, res) => {
+  console.log("🧪 TEST-WEBHOOK EMPFANGEN:", req.body);
+
+  res.json({
+    status: "OK",
+    message: "👍 Test erfolgreich empfangen!",
+    received: req.body
+  });
+});
