@@ -5,28 +5,17 @@ import { allowedPairs } from "./config/pairs.js";
 const app = express();
 app.use(express.json());
 
-app.post("/webhook", async (req, res) => {
+app.post('/webhook', async (req, res) => {
   try {
-    const { symbol, side } = req.body;
+    const signal = req.body;
+    console.log('TradingView Signal empfangen:', signal);
 
-    console.log("📩 Alert erhalten:", req.body);
+    const result = await binanceUtils.placeMarketOrder(signal);   // dein utils/binance.js
 
-    if (!allowedPairs.includes(symbol)) {
-      console.log("❌ Symbol nicht erlaubt:", symbol);
-      return res.json({ status: "ignored", reason: "pair not allowed" });
-    }
-
-    console.log("🚀 Sende Order an Binance...");
-
-    const order = await placeOrder(symbol, side);
-
-    console.log("✅ ORDER:", order.data);
-
-    res.json({ status: "ok", order: order.data });
-
+    res.json({ status: 'success', message: 'Order platziert', result });
   } catch (err) {
-    console.error("❌ ERROR:", err.response?.data || err.message);
-    res.status(500).json({ error: err.response?.data || err.message });
+    console.error('Webhook Fehler:', err);
+    res.status(500).json({ status: 'error', message: err.message });
   }
 });
 
