@@ -5,7 +5,7 @@ const app = express();
 app.use(express.json());
 
 // ======================
-// Haupt-Webhook für TradingView
+// Haupt-Webhook für TradingView Alerts
 // ======================
 app.post('/webhook', async (req, res) => {
   try {
@@ -29,7 +29,7 @@ app.post('/webhook', async (req, res) => {
 });
 
 // ======================
-// Test-Route (funktioniert schon bei dir)
+// Test-Route
 // ======================
 app.post("/test", (req, res) => {
   console.log("🧪 TEST-WEBHOOK EMPFANGEN:", req.body);
@@ -44,14 +44,15 @@ app.post("/test", (req, res) => {
 // Server starten
 // ======================
 const PORT = process.env.PORT || 3000;
+
 app.listen(PORT, () => {
   console.log(`🚀 Hybrid Bot läuft auf Port ${PORT}`);
-  console.log(`📡 Webhook-URL: /webhook`);
-  console.log(`🧪 Test-URL: /test`);
+  console.log(`📡 Webhook bereit: /webhook`);
+  console.log(`🧪 Test-Route: /test`);
 
-  // Leverage einmalig setzen beim Start
+  // Leverage beim Start setzen
   binanceUtils.initLeverage().catch(err => {
-    console.warn('⚠️ Leverage konnte nicht gesetzt werden:', err.message);
+    console.warn('⚠️ Leverage konnte nicht automatisch gesetzt werden:', err.message);
   });
 });
 
