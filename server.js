@@ -1,5 +1,5 @@
 import express from "express";
-import { binanceUtils } from "./utils/binance.js";
+import { bitgetUtils } from "./utils/bitget.js";
 
 const app = express();
 app.use(express.json());
