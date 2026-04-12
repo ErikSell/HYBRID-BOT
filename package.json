@@ -9,6 +9,6 @@
   "dependencies": {
     "express": "^4.18.2",
     "axios": "^1.6.0",
-    "@binance/futures-connector": "^1.0.0"
+    "binance": "^3.5.4"
   }
 }
