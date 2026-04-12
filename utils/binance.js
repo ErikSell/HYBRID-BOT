@@ -1,25 +1,21 @@
-import pkg from '@binance/futures-connector';
-const { USDMClient } = pkg;
+import { USDMClient } from 'binance';
 
 class BinanceFutures {
   constructor() {
-    this.client = new USDMClient(
-      process.env.BINANCE_API_KEY,
-      process.env.BINANCE_API_SECRET,
-      { baseURL: 'https://fapi.binance.com' }
-    );
+    this.client = new USDMClient({
+      api_key: process.env.BINANCE_API_KEY,
+      api_secret: process.env.BINANCE_API_SECRET,
+      // baseURL ist bei dieser Library automatisch fapi.binance.com für USDM
+    });
 
     this.symbol = 'XAUUSDT';
-    this.defaultQuantity = 0.01;   // Sehr klein zum Testen (~20-30 USD)
-    this.leverage = 3;             // Starte sicher mit 3x (später erhöhen)
+    this.defaultQuantity = 0.01;   // Sehr klein zum Testen (~20-30 USD Notional)
+    this.leverage = 3;             // Starte mit 3x – sicher!
   }
 
   async initLeverage() {
     try {
-      await this.client.changeLeverage({
-        symbol: this.symbol,
-        leverage: this.leverage
-      });
+      await this.client.changeInitialLeverage(this.symbol, this.leverage);
       console.log(`✅ Leverage für ${this.symbol} auf ${this.leverage}x gesetzt`);
     } catch (err) {
       console.warn(`Leverage setzen fehlgeschlagen (evtl. schon gesetzt): ${err.message}`);
@@ -46,23 +42,21 @@ class BinanceFutures {
     if (quantity < 0.001) quantity = 0.01;
 
     try {
-      const orderParams = {
+      const order = await this.client.submitNewOrder({
         symbol: this.symbol,
         side: side,
         type: 'MARKET',
         quantity: quantity
-      };
-
-      const result = await this.client.newOrder(orderParams);
+      });
 
       console.log(`[${new Date().toISOString()}] ✅ ${side} Market Order platziert: ${quantity} ${this.symbol}`);
-      console.log('Order Response:', JSON.stringify(result, null, 2));
+      console.log('Order Response:', JSON.stringify(order, null, 2));
 
       return { 
         status: 'success', 
         side, 
         quantity, 
-        order: result 
+        order 
       };
     } catch (error) {
       console.error(`[${new Date().toISOString()}] ❌ Binance Order Fehler:`, error.message || error);
