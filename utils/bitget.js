@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'ARBUSDT';
-    this.defaultQuantity = 15;        // Dein Test-Wert
+    this.defaultQuantity = 50;        // Erhöht, damit es über 5 USDT liegt
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
     this.marginMode = 'isolated';
@@ -48,7 +48,7 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`⚠️ Leverage auf 1x + Isolated Margin (manuell prüfen)`);
+    console.log(`⚠️ Leverage auf 1x + Isolated Margin`);
   }
 
   async placeMarketOrder(signal) {
@@ -61,7 +61,6 @@ class BitgetFutures {
     let tradeSide = 'open';
     let quantity = parseFloat(signal.contracts) || this.defaultQuantity;
 
-    // Verbesserte Erkennung
     if (position === 'flat') {
       console.log('🔄 EXIT SIGNAL erkannt → Position wird geschlossen');
       tradeSide = 'close';
@@ -81,8 +80,9 @@ class BitgetFutures {
       return { status: 'ignored' };
     }
 
+    // Mindestgröße sicherstellen (Bitget verlangt ca. 5 USDT Notional)
+    quantity = Math.max(quantity, 50); 
     quantity = parseFloat(quantity.toFixed(1));
-    if (quantity < 1) quantity = 15;
 
     try {
       const orderData = {
@@ -109,7 +109,7 @@ class BitgetFutures {
         order: result 
       };
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] ❌ Bitget Order Fehler:`, error.message || error);
+      console.error(`[${new Date().toISOString()}] ❌ Bitget Order Fehler:`, error.response?.data || error.message);
       throw error;
     }
   }
