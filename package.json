@@ -1,11 +1,14 @@
 {
-  "name": "binance-bot",
+  "name": "hybrid-bot",
   "version": "1.0.0",
   "type": "module",
   "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
   "dependencies": {
     "express": "^4.18.2",
     "axios": "^1.6.0",
-    "crypto-js": "^4.2.0"
+    "@binance/futures-connector": "^1.0.0"
   }
 }
