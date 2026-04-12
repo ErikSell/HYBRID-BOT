@@ -5,10 +5,10 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'ARBUSDT';
-    this.defaultQuantity = 10;        // Fallback Quantity
-    this.leverage = 1;                // Immer 1x wie gewünscht
+    this.defaultQuantity = 15;        // Dein Test-Wert
+    this.leverage = 1;
     this.productType = 'USDT-FUTURES';
-    this.marginMode = 'isolated';     // Isolated Margin
+    this.marginMode = 'isolated';
   }
 
   _getSignature(timestamp, method, endpoint, body = '') {
@@ -48,57 +48,59 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`⚠️ Leverage auf 1x + Isolated Margin (manuell im Bitget Dashboard prüfen)`);
+    console.log(`⚠️ Leverage auf 1x + Isolated Margin (manuell prüfen)`);
   }
 
   async placeMarketOrder(signal) {
     const action = (signal.action || '').toLowerCase().trim();
     const position = (signal.position || '').toLowerCase().trim();
-    let quantity = parseFloat(signal.contracts) || this.defaultQuantity;
+
+    console.log(`🔍 Signal verarbeitet → Action: "${action}" | Position: "${position}"`);
 
     let side = 'buy';
     let tradeSide = 'open';
+    let quantity = parseFloat(signal.contracts) || this.defaultQuantity;
 
-    // Exit-Logik bei Position "flat"
+    // Verbesserte Erkennung
     if (position === 'flat') {
-      console.log('🔄 Exit-Signal erkannt (Position: flat) → Position wird geschlossen');
+      console.log('🔄 EXIT SIGNAL erkannt → Position wird geschlossen');
       tradeSide = 'close';
-      quantity = parseFloat(signal.contracts) || 10;
     } 
-    else if (action === 'buy' || action === 'entrylong' || position === 'long') {
+    else if (action === 'buy' || position === 'long') {
       side = 'buy';
       tradeSide = 'open';
+      console.log('🟢 LONG Signal erkannt');
     } 
-    else if (action === 'sell' || action === 'entryshort' || position === 'short') {
+    else if (action === 'sell' || position === 'short') {
       side = 'sell';
       tradeSide = 'open';
+      console.log('🔴 SHORT Signal erkannt');
     } 
     else {
-      console.log('❌ Unbekanntes Signal ignoriert:', signal);
+      console.log('❌ Unbekanntes Signal ignoriert');
       return { status: 'ignored' };
     }
 
-    // Precision für ARBUSDT
     quantity = parseFloat(quantity.toFixed(1));
-    if (quantity < 1) quantity = 10;
+    if (quantity < 1) quantity = 15;
 
     try {
       const orderData = {
         symbol: this.symbol,
         productType: this.productType,
-        marginMode: this.marginMode,      // Isolated
+        marginMode: this.marginMode,
         marginCoin: 'USDT',
         side: side,
         orderType: 'market',
         size: quantity.toString(),
         tradeSide: tradeSide,
-        leverage: this.leverage.toString()   // 1x explizit mitgeben
+        leverage: this.leverage.toString()
       };
 
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
-      const actionText = position === 'flat' ? 'CLOSE' : side.toUpperCase();
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Isolated, 1x) platziert: ${quantity} ${this.symbol}`);
+      const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Isolated 1x) platziert: ${quantity} ${this.symbol}`);
 
       return { 
         status: 'success', 
