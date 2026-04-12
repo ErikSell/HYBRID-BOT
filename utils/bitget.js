@@ -5,9 +5,10 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'ARBUSDT';
-    this.defaultQuantity = 10;
-    this.leverage = 8;
+    this.defaultQuantity = 10;        // Fallback Quantity
+    this.leverage = 1;                // Immer 1x wie gewünscht
     this.productType = 'USDT-FUTURES';
+    this.marginMode = 'isolated';     // Isolated Margin
   }
 
   _getSignature(timestamp, method, endpoint, body = '') {
@@ -47,7 +48,7 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`⚠️ Leverage-Setzen übersprungen für ${this.symbol} (bitte manuell auf 8x im Bitget Dashboard setzen)`);
+    console.log(`⚠️ Leverage auf 1x + Isolated Margin (manuell im Bitget Dashboard prüfen)`);
   }
 
   async placeMarketOrder(signal) {
@@ -85,18 +86,19 @@ class BitgetFutures {
       const orderData = {
         symbol: this.symbol,
         productType: this.productType,
-        marginMode: 'crossed',
+        marginMode: this.marginMode,      // Isolated
         marginCoin: 'USDT',
         side: side,
         orderType: 'market',
         size: quantity.toString(),
-        tradeSide: tradeSide
+        tradeSide: tradeSide,
+        leverage: this.leverage.toString()   // 1x explizit mitgeben
       };
 
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : side.toUpperCase();
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} ${this.symbol}`);
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Isolated, 1x) platziert: ${quantity} ${this.symbol}`);
 
       return { 
         status: 'success', 
