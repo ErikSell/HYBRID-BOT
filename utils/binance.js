@@ -1,4 +1,5 @@
-import { USDMClient } from '@binance/futures-connector';
+import pkg from '@binance/futures-connector';
+const { USDMClient } = pkg;
 
 class BinanceFutures {
   constructor() {
@@ -10,7 +11,7 @@ class BinanceFutures {
 
     this.symbol = 'XAUUSDT';
     this.defaultQuantity = 0.01;   // Sehr klein zum Testen (~20-30 USD)
-    this.leverage = 3;             // Starte sicher mit 3x
+    this.leverage = 3;             // Starte sicher mit 3x (später erhöhen)
   }
 
   async initLeverage() {
