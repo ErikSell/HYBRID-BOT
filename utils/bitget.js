@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'ARBUSDT';
-    this.defaultQuantity = 50;        // Erhöht, damit es über 5 USDT liegt
+    this.fixedQuantity = 100;           // ≈ 10 USDT bei aktuellem Preis ~0.10$
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
     this.marginMode = 'isolated';
@@ -48,18 +48,17 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`⚠️ Leverage auf 1x + Isolated Margin`);
+    console.log(`⚠️ Leverage auf 1x + Isolated Margin (manuell prüfen)`);
   }
 
   async placeMarketOrder(signal) {
     const action = (signal.action || '').toLowerCase().trim();
     const position = (signal.position || '').toLowerCase().trim();
 
-    console.log(`🔍 Signal verarbeitet → Action: "${action}" | Position: "${position}"`);
+    console.log(`🔍 Signal verarbeitet → Action: "${action}" | Position: "${position}" | Contracts from TV: ${signal.contracts}`);
 
     let side = 'buy';
     let tradeSide = 'open';
-    let quantity = parseFloat(signal.contracts) || this.defaultQuantity;
 
     if (position === 'flat') {
       console.log('🔄 EXIT SIGNAL erkannt → Position wird geschlossen');
@@ -80,9 +79,7 @@ class BitgetFutures {
       return { status: 'ignored' };
     }
 
-    // Mindestgröße sicherstellen (Bitget verlangt ca. 5 USDT Notional)
-    quantity = Math.max(quantity, 50); 
-    quantity = parseFloat(quantity.toFixed(1));
+    const quantity = this.fixedQuantity;   // Immer feste Größe verwenden
 
     try {
       const orderData = {
@@ -100,7 +97,7 @@ class BitgetFutures {
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Isolated 1x) platziert: ${quantity} ${this.symbol}`);
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Isolated 1x) platziert: ${quantity} ARB`);
 
       return { 
         status: 'success', 
