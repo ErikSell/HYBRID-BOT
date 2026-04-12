@@ -1,21 +1,21 @@
-import Binance from 'binance';
+import { USDMClient } from '@binance/futures-connector';
 
 class BinanceFutures {
   constructor() {
-    this.client = new Binance({
-      apiKey: process.env.BINANCE_API_KEY,
-      apiSecret: process.env.BINANCE_API_SECRET,
-      futures: true   // Wichtig: Futures-Modus aktivieren
-    });
+    this.client = new USDMClient(
+      process.env.BINANCE_API_KEY,
+      process.env.BINANCE_API_SECRET,
+      { baseURL: 'https://fapi.binance.com' }
+    );
 
     this.symbol = 'XAUUSDT';
-    this.defaultQuantity = 0.01;   // Sehr klein zum Testen (~20-30 USD Notional)
-    this.leverage = 3;             // Starte vorsichtig mit 3x oder 1x
+    this.defaultQuantity = 0.01;   // Sehr klein zum Testen (~20-30 USD)
+    this.leverage = 3;             // Starte sicher mit 3x
   }
 
   async initLeverage() {
     try {
-      await this.client.futuresLeverage({
+      await this.client.changeLeverage({
         symbol: this.symbol,
         leverage: this.leverage
       });
@@ -26,33 +26,45 @@ class BinanceFutures {
   }
 
   async placeMarketOrder(signal) {
-    const action = (signal.action || '').toLowerCase();
-    const position = (signal.position || '').toLowerCase();
+    const action = (signal.action || '').toLowerCase().trim();
+    const position = (signal.position || '').toLowerCase().trim();
     let quantity = parseFloat(signal.contracts) || this.defaultQuantity;
 
     let side = 'BUY';
-    if (action.includes('sell') || position === 'short') {
+
+    if (action === 'buy' || action === 'entrylong' || position === 'long') {
+      side = 'BUY';
+    } else if (action === 'sell' || action === 'entryshort' || position === 'short') {
       side = 'SELL';
+    } else {
+      console.log('❌ Unbekanntes Signal ignoriert:', signal);
+      return { status: 'ignored', reason: 'unknown action' };
     }
 
-    // Quantity auf Binance-Precision bringen (XAUUSDT erlaubt meist 3 Dezimalstellen)
     quantity = parseFloat(quantity.toFixed(3));
-
-    if (quantity < 0.001) quantity = 0.01; // Mindestgröße Sicherheit
+    if (quantity < 0.001) quantity = 0.01;
 
     try {
-      const order = await this.client.futuresMarketOrder({
+      const orderParams = {
         symbol: this.symbol,
         side: side,
+        type: 'MARKET',
         quantity: quantity
-      });
+      };
 
-      console.log(`[${new Date().toISOString()}] ✅ ${side} Market Order: ${quantity} ${this.symbol}`);
-      console.log('Order Details:', order);
+      const result = await this.client.newOrder(orderParams);
 
-      return { status: 'success', side, quantity, order };
+      console.log(`[${new Date().toISOString()}] ✅ ${side} Market Order platziert: ${quantity} ${this.symbol}`);
+      console.log('Order Response:', JSON.stringify(result, null, 2));
+
+      return { 
+        status: 'success', 
+        side, 
+        quantity, 
+        order: result 
+      };
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] ❌ Binance Fehler:`, error.message || error);
+      console.error(`[${new Date().toISOString()}] ❌ Binance Order Fehler:`, error.message || error);
       throw error;
     }
   }
