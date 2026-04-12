@@ -1,58 +1,56 @@
-import axios from "axios";
-import CryptoJS from "crypto-js";
-import { riskConfig } from "../config/risk.js";
+const { Spot, Futures } = require('@binance/futures-connector'); // oder binance-api-node / ccxt – je nach dem was du schon nutzt
 
-const API_KEY = process.env.BINANCE_KEY;
-const API_SECRET = process.env.BINANCE_SECRET;
+// Falls du noch kein Futures-Client hast, sag Bescheid, ich passe es an
 
-const BASE_URL = "https://fapi.binance.com";
+class BinanceUtils {
+  constructor() {
+    this.futuresClient = new Futures(process.env.BINANCE_API_KEY, process.env.BINANCE_API_SECRET);
+    this.symbol = 'XAUUSDT';
+    this.defaultQuantity = 0.01;     // Sehr klein für Test – später anpassen
+    this.leverage = 5;
+  }
 
-// Sign Query
-function sign(query) {
-  return CryptoJS.HmacSHA256(query, API_SECRET).toString();
+  async setLeverage() {
+    try {
+      await this.futuresClient.changeInitialLeverage(this.symbol, this.leverage);
+      console.log(`✅ Leverage auf ${this.leverage}x gesetzt für ${this.symbol}`);
+    } catch (err) {
+      console.error('Leverage Fehler:', err.message);
+    }
+  }
+
+  async placeMarketOrder(signal) {
+    const action = signal.action ? signal.action.toLowerCase() : '';
+    const position = signal.position ? signal.position.toLowerCase() : '';
+    let side = 'BUY';
+
+    if (action === 'buy' || (position === 'long' && action.includes('buy'))) {
+      side = 'BUY';
+    } else if (action === 'sell' || (position === 'short' && action.includes('sell'))) {
+      side = 'SELL';
+    } else {
+      console.log('Unbekanntes Signal ignoriert:', signal);
+      return { status: 'ignored' };
+    }
+
+    const quantity = parseFloat(signal.contracts) || this.defaultQuantity;
+
+    try {
+      const order = await this.futuresClient.newOrder({
+        symbol: this.symbol,
+        side: side,
+        type: 'MARKET',
+        quantity: quantity.toFixed(3)   // Binance verlangt oft bestimmte Precision
+      });
+
+      console.log(`[${new Date().toISOString()}] ✅ ${side} Order ausgeführt: ${quantity} ${this.symbol}`);
+      console.log(order);
+      return { status: 'success', order };
+    } catch (error) {
+      console.error(`[${new Date().toISOString()}] ❌ Binance Fehler:`, error.message || error);
+      throw error;
+    }
+  }
 }
 
-// Get account balance
-export async function getBalance() {
-  const timestamp = Date.now();
-  const query = `timestamp=${timestamp}`;
-  const signature = sign(query);
-
-  const url = `${BASE_URL}/fapi/v2/balance?${query}&signature=${signature}`;
-
-  const res = await axios.get(url, {
-    headers: { "X-MBX-APIKEY": API_KEY }
-  });
-
-  const usdt = res.data.find(a => a.asset === "USDT");
-  return parseFloat(usdt.balance);
-}
-
-// Calculate position size
-export async function calculateQty(price) {
-  const balance = await getBalance();
-  const margin = balance * (riskConfig.marginPercent / 100);
-
-  const qty = margin / price;
-  return Number(qty.toFixed(3));
-}
-
-// Place market order
-export async function placeOrder(symbol, side) {
-  const priceRes = await axios.get(
-    `${BASE_URL}/fapi/v1/ticker/price?symbol=${symbol}`
-  );
-
-  const price = parseFloat(priceRes.data.price);
-  const qty = await calculateQty(price);
-
-  const timestamp = Date.now();
-  const query = `symbol=${symbol}&side=${side}&type=MARKET&quantity=${qty}&timestamp=${timestamp}`;
-  const signature = sign(query);
-
-  const url = `${BASE_URL}/fapi/v1/order?${query}&signature=${signature}`;
-
-  return axios.post(url, {}, {
-    headers: { "X-MBX-APIKEY": API_KEY }
-  });
-}
+module.exports = new BinanceUtils();
