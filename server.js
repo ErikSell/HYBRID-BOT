@@ -1,64 +1,58 @@
-import { USDMClient } from '@binance/futures-connector';
+import express from "express";
+import { binanceUtils } from "./utils/binance.js";
 
-class BinanceFutures {
-  constructor() {
-    this.client = new USDMClient(
-      process.env.BINANCE_API_KEY,
-      process.env.BINANCE_API_SECRET,
-      { baseURL: 'https://fapi.binance.com' }   // USDT-M Futures
-    );
+const app = express();
+app.use(express.json());
 
-    this.symbol = 'XAUUSDT';
-    this.defaultQuantity = 0.01;   // Sehr klein zum Testen (ca. 20-30 USD Notional bei Gold ~2500)
-    this.leverage = 5;             // Ändere auf 1-3 für ersten Test
+// ======================
+// Haupt-Webhook für TradingView
+// ======================
+app.post('/webhook', async (req, res) => {
+  try {
+    const signal = req.body;
+    console.log('📨 TradingView Signal empfangen:', JSON.stringify(signal, null, 2));
+
+    const result = await binanceUtils.placeMarketOrder(signal);
+
+    res.json({
+      status: 'success',
+      message: 'Order erfolgreich an Binance gesendet',
+      result
+    });
+  } catch (err) {
+    console.error('❌ Webhook Fehler:', err.message || err);
+    res.status(500).json({
+      status: 'error',
+      message: err.message || 'Fehler beim Platzieren der Order'
+    });
   }
+});
 
-  async initLeverage() {
-    try {
-      await this.client.changeInitialLeverage(this.symbol, this.leverage);
-      console.log(`✅ Leverage für ${this.symbol} auf ${this.leverage}x gesetzt`);
-    } catch (err) {
-      console.warn(`Leverage setzen fehlgeschlagen (evtl. schon gesetzt): ${err.message}`);
-    }
-  }
+// ======================
+// Test-Route (funktioniert schon bei dir)
+// ======================
+app.post("/test", (req, res) => {
+  console.log("🧪 TEST-WEBHOOK EMPFANGEN:", req.body);
+  res.json({
+    status: "OK",
+    message: "Test erfolgreich empfangen!",
+    received: req.body
+  });
+});
 
-  async placeMarketOrder(signal) {
-    const action = (signal.action || '').toLowerCase();
-    const position = (signal.position || '').toLowerCase();
-    const contracts = parseFloat(signal.contracts) || this.defaultQuantity;
+// ======================
+// Server starten
+// ======================
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log(`🚀 Hybrid Bot läuft auf Port ${PORT}`);
+  console.log(`📡 Webhook-URL: /webhook`);
+  console.log(`🧪 Test-URL: /test`);
 
-    let side = 'BUY';
+  // Leverage einmalig setzen beim Start
+  binanceUtils.initLeverage().catch(err => {
+    console.warn('⚠️ Leverage konnte nicht gesetzt werden:', err.message);
+  });
+});
 
-    if (action === 'buy' || action === 'entrylong' || position === 'long') {
-      side = 'BUY';
-    } else if (action === 'sell' || action === 'entryshort' || position === 'short') {
-      side = 'SELL';
-    } else {
-      console.log('❌ Unbekanntes Signal ignoriert:', signal);
-      return { status: 'ignored', reason: 'unknown action' };
-    }
-
-    try {
-      const orderParams = {
-        symbol: this.symbol,
-        side: side,
-        type: 'MARKET',
-        quantity: contracts.toFixed(3),   // Binance Precision für XAUUSDT
-      };
-
-      const result = await this.client.newOrder(orderParams);
-
-      console.log(`[${new Date().toISOString()}] ✅ ${side} Market Order platziert: ${contracts} ${this.symbol}`);
-      console.log('Order Response:', result);
-
-      return { status: 'success', side, quantity: contracts, order: result };
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] ❌ Binance Order Fehler:`, error.message || error);
-      throw error;
-    }
-  }
-}
-
-const binance = new BinanceFutures();
-export { binance as binanceUtils };
-export default binance;
+export default app;
