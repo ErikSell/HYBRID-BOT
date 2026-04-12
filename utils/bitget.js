@@ -4,8 +4,8 @@ import crypto from 'crypto';
 class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
-    this.symbol = 'ARBUSDT';           // Arbitrum Perpetual
-    this.defaultQuantity = 10;         // Fallback Quantity
+    this.symbol = 'ARBUSDT';
+    this.defaultQuantity = 10;
     this.leverage = 8;
     this.productType = 'USDT-FUTURES';
   }
@@ -47,17 +47,7 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    try {
-      await this._signedRequest('POST', '/api/v2/mix/order/setLeverage', {
-        symbol: this.symbol,
-        productType: this.productType,
-        marginMode: 'crossed',
-        leverage: this.leverage.toString()
-      });
-      console.log(`✅ Leverage für ${this.symbol} auf ${this.leverage}x gesetzt`);
-    } catch (err) {
-      console.warn('Leverage setzen fehlgeschlagen:', err.message);
-    }
+    console.log(`⚠️ Leverage-Setzen übersprungen für ${this.symbol} (bitte manuell auf 8x im Bitget Dashboard setzen)`);
   }
 
   async placeMarketOrder(signal) {
@@ -68,12 +58,10 @@ class BitgetFutures {
     let side = 'buy';
     let tradeSide = 'open';
 
-    // WICHTIG: Exit-Logik bei "flat"
+    // Exit-Logik bei Position "flat"
     if (position === 'flat') {
       console.log('🔄 Exit-Signal erkannt (Position: flat) → Position wird geschlossen');
       tradeSide = 'close';
-      
-      // Bei Exit nehmen wir die Contracts aus dem Signal (das ist die aktuelle Positionsgröße)
       quantity = parseFloat(signal.contracts) || 10;
     } 
     else if (action === 'buy' || action === 'entrylong' || position === 'long') {
@@ -89,7 +77,7 @@ class BitgetFutures {
       return { status: 'ignored' };
     }
 
-    // Precision für ARBUSDT (meist 1 Dezimalstelle)
+    // Precision für ARBUSDT
     quantity = parseFloat(quantity.toFixed(1));
     if (quantity < 1) quantity = 10;
 
@@ -102,14 +90,13 @@ class BitgetFutures {
         side: side,
         orderType: 'market',
         size: quantity.toString(),
-        tradeSide: tradeSide   // "open" oder "close"
+        tradeSide: tradeSide
       };
 
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : side.toUpperCase();
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} ${this.symbol} (tradeSide: ${tradeSide})`);
-      console.log('Bitget Response:', JSON.stringify(result, null, 2));
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} ${this.symbol}`);
 
       return { 
         status: 'success', 
