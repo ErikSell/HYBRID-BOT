@@ -127,16 +127,20 @@ async function getOpenPosition() {
     { headers: authHeaders() }
   )
 
-  // Rohe Antwort loggen damit wir die Struktur sehen
-  console.log('[TL] Positions raw:', JSON.stringify(res.data))
-
   const positions = res.data.d?.positions || []
   if (positions.length === 0) return null
 
+  // Positionen kommen als Array von Arrays:
+  // [id, instrumentId, routeId, side, qty, price, ...]
   const pos = positions[0]
-  // Alle möglichen ID-Felder loggen
-  console.log('[TL] Position Felder:', JSON.stringify(pos))
-  return pos
+  return {
+    id:           pos[0],
+    instrumentId: pos[1],
+    routeId:      pos[2],
+    side:         pos[3],
+    qty:          pos[4],
+    price:        pos[5],
+  }
 }
 
 // ================================
@@ -150,21 +154,10 @@ async function closePosition() {
     return
   }
 
-  // Alle möglichen ID-Felder probieren
-  const posId = position.id
-             || position.positionId
-             || position.orderId
-             || position.tradeId
-
-  if (!posId) {
-    console.log('[TL] Keine Position ID gefunden. Felder:', Object.keys(position))
-    return
-  }
-
-  console.log(`[TL] Schließe Position: ${posId}`)
+  console.log(`[TL] Schließe Position: ${position.id}`)
 
   const res = await axios.delete(
-    `${BASE_URL}/trade/accounts/${accountId}/positions/${posId}`,
+    `${BASE_URL}/trade/accounts/${accountId}/positions/${position.id}`,
     { headers: authHeaders() }
   )
 
