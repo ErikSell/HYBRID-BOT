@@ -4,11 +4,11 @@ import crypto from 'crypto';
 class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
-    this.symbol = 'XAGUSDT';           // ← Jetzt Silver Perpetual
-    this.leverage = 1;                 // 1x wie gewünscht
+    this.symbol = 'XAGUSDT';           // Silver Perpetual
+    this.fixedQuantity = 0.5;          // Für Silver realistisch (ca. 30-40 USDT bei ~74$)
+    this.leverage = 1;
     this.productType = 'USDT-FUTURES';
     this.marginMode = 'isolated';
-    this.riskPercent = 95;             // 95% des verfügbaren USDT → fast all-in
   }
 
   _getSignature(timestamp, method, endpoint, body = '') {
@@ -47,7 +47,7 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`✅ Silver (XAGUSDT) | 1x Leverage | Isolated Margin | ~95% All-in Modus`);
+    console.log(`✅ XAGUSDT | 1x Leverage | Isolated Margin`);
   }
 
   async placeMarketOrder(signal) {
@@ -60,7 +60,7 @@ class BitgetFutures {
     let tradeSide = 'open';
 
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL → versuche Position zu schließen');
+      console.log('🔄 EXIT SIGNAL → versuche zu schließen');
       tradeSide = 'close';
     } 
     else if (action === 'buy' || position === 'long') {
@@ -74,22 +74,13 @@ class BitgetFutures {
       console.log('🔴 SHORT Signal erkannt');
     } 
     else {
-      console.log('❌ Unbekanntes Signal ignoriert');
+      console.log('❌ Unbekanntes Signal');
       return { status: 'ignored' };
     }
 
+    const quantity = this.fixedQuantity;
+
     try {
-      // Hole aktuellen USDT Balance
-      const balanceRes = await this._signedRequest('GET', '/api/v2/mix/account/account?symbol=XAGUSDT&marginCoin=USDT');
-      const usdtBalance = parseFloat(balanceRes.data?.available || 0);
-
-      // Berechne Quantity basierend auf ~95% des Balances (fast all-in bei 1x)
-      let quantity = (usdtBalance * this.riskPercent / 100) / 30;   // grobe Schätzung für Silver (Preis ~30$)
-      quantity = Math.max(quantity, 0.1);   // Mindestgröße
-      quantity = parseFloat(quantity.toFixed(2)); // Precision für XAGUSDT
-
-      console.log(`💰 Balance: ${usdtBalance.toFixed(2)} USDT → Quantity: ${quantity} XAG`);
-
       const orderData = {
         symbol: this.symbol,
         productType: this.productType,
@@ -105,7 +96,7 @@ class BitgetFutures {
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (1x Isolated) platziert: ${quantity} XAG`);
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG`);
 
       return { status: 'success', action: actionText, quantity, order: result };
     } catch (error) {
