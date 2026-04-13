@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'XAGUSDT';
-    this.fixedQuantity = 0.4;        // ca. 28-30 USDT
+    this.fixedQuantity = 0.4;
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
   }
@@ -53,20 +53,60 @@ class BitgetFutures {
     let side = 'buy';
     let tradeSide = 'open';
 
-    // === EXIT: egal was oben steht, bei "flat" immer schließen ===
     if (position === 'flat') {
-      console.log('🔄 FLAT SIGNAL → Position wird geschlossen (egal ob Long oder Short)');
+      console.log('🔄 FLAT SIGNAL → versuche Position zu schließen');
+
+      // Versuch 1: Short schließen (buy to close)
+      side = 'buy';
       tradeSide = 'close';
-      // Wir wissen nicht, welche Position offen ist → versuchen wir erst "buy to close", falls das nicht geht, wird es beim nächsten Mal "sell to close" probiert
-      side = 'buy';   // Default: Short schließen
+
+      try {
+        const orderData = {
+          symbol: this.symbol,
+          productType: this.productType,
+          marginMode: "isolated",
+          marginCoin: "USDT",
+          side: side,
+          orderType: "market",
+          size: this.fixedQuantity.toString(),
+          tradeSide: tradeSide
+        };
+
+        const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
+
+        console.log(`[${new Date().toISOString()}] ✅ CLOSE Order platziert (Short Exit)`);
+        return { status: 'success', action: 'CLOSE', quantity: this.fixedQuantity, order: result };
+
+      } catch (error) {
+        // Wenn Short-Exit nicht klappt, versuchen wir Long-Exit (sell to close)
+        console.log('Short-Exit fehlgeschlagen, versuche Long-Exit...');
+        side = 'sell';
+        tradeSide = 'close';
+
+        const orderData = {
+          symbol: this.symbol,
+          productType: this.productType,
+          marginMode: "isolated",
+          marginCoin: "USDT",
+          side: side,
+          orderType: "market",
+          size: this.fixedQuantity.toString(),
+          tradeSide: tradeSide
+        };
+
+        const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
+
+        console.log(`[${new Date().toISOString()}] ✅ CLOSE Order platziert (Long Exit Versuch)`);
+        return { status: 'success', action: 'CLOSE', quantity: this.fixedQuantity, order: result };
+      }
     } 
-    // === LONG ENTRY ===
+
+    // Entry Logik
     else if (position === 'long') {
       side = 'buy';
       tradeSide = 'open';
       console.log('🟢 LONG Entry');
     } 
-    // === SHORT ENTRY ===
     else if (position === 'short') {
       side = 'sell';
       tradeSide = 'open';
@@ -93,8 +133,8 @@ class BitgetFutures {
 
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
-      const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG`);
+      const actionText = position === 'long' ? 'LONG' : 'SHORT';
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Entry platziert: ${quantity} XAG`);
 
       return { status: 'success', action: actionText, quantity, order: result };
     } catch (error) {
