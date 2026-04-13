@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'XAGUSDT';
-    this.fixedQuantity = 0.4;        // ca. 28-30 USDT bei aktuellem Preis (~74$)
+    this.fixedQuantity = 0.4;        // ca. 28-30 USDT
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
   }
@@ -45,10 +45,6 @@ class BitgetFutures {
     }
   }
 
-  async initLeverage() {
-    console.log(`✅ XAGUSDT Silver | 1x Leverage | Isolated Margin | ~28 USDT pro Trade`);
-  }
-
   async placeMarketOrder(signal) {
     const action = (signal.action || '').toLowerCase().trim();
     const position = (signal.position || '').toLowerCase().trim();
@@ -58,8 +54,9 @@ class BitgetFutures {
     let side = 'buy';
     let tradeSide = 'open';
 
+    // Exit-Logik verbessert
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL → versuche Position zu schließen');
+      console.log('🔄 EXIT SIGNAL erkannt → versuche Position zu schließen');
       tradeSide = 'close';
     } 
     else if (action === 'buy' || position === 'long') {
@@ -80,23 +77,20 @@ class BitgetFutures {
     const quantity = this.fixedQuantity;
 
     try {
-      // Minimaler Order-Body für XAGUSDT
       const orderData = {
         symbol: this.symbol,
         productType: this.productType,
-        marginMode: 'isolated',
-        marginCoin: 'USDT',
+        marginMode: "isolated",
         side: side,
-        orderType: 'market',
+        orderType: "market",
         size: quantity.toString(),
         tradeSide: tradeSide
-        // leverage wird hier weggelassen, da 1x Default ist
       };
 
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG (~28 USDT)`);
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG`);
 
       return { status: 'success', action: actionText, quantity, order: result };
     } catch (error) {
