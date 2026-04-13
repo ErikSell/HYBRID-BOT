@@ -4,11 +4,11 @@ import crypto from 'crypto';
 class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
-    this.symbol = 'XAGUSDT';           // Silver Perpetual
-    this.fixedQuantity = 0.5;          // Für Silver realistisch (ca. 30-40 USDT bei ~74$)
-    this.leverage = 1;
+    this.symbol = 'XAGUSDT';
+    this.leverage = 1;                    // Immer 1x
     this.productType = 'USDT-FUTURES';
     this.marginMode = 'isolated';
+    this.riskPercent = 95;                // 95% des verfügbaren USDT einsetzen
   }
 
   _getSignature(timestamp, method, endpoint, body = '') {
@@ -47,7 +47,7 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`✅ XAGUSDT | 1x Leverage | Isolated Margin`);
+    console.log(`✅ XAGUSDT | 1x Leverage | Isolated Margin | ~95% All-in Modus`);
   }
 
   async placeMarketOrder(signal) {
@@ -60,7 +60,7 @@ class BitgetFutures {
     let tradeSide = 'open';
 
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL → versuche zu schließen');
+      console.log('🔄 EXIT SIGNAL → versuche Position zu schließen');
       tradeSide = 'close';
     } 
     else if (action === 'buy' || position === 'long') {
@@ -78,9 +78,18 @@ class BitgetFutures {
       return { status: 'ignored' };
     }
 
-    const quantity = this.fixedQuantity;
-
     try {
+      // Aktuellen USDT Balance holen
+      const balanceRes = await this._signedRequest('GET', `/api/v2/mix/account/account?symbol=${this.symbol}&marginCoin=USDT`);
+      const availableUSDT = parseFloat(balanceRes.data?.available || 30);   // Fallback 30 USDT
+
+      // Quantity berechnen: fast all-in mit 1x Leverage
+      let quantity = (availableUSDT * this.riskPercent / 100) / 74;   // Silberpreis ca. 74$
+      quantity = Math.max(quantity, 0.1); 
+      quantity = parseFloat(quantity.toFixed(3));   // Precision für XAGUSDT
+
+      console.log(`💰 Verfügbar: ${availableUSDT.toFixed(2)} USDT → Kaufe ${quantity} XAG (1x Leverage)`);
+
       const orderData = {
         symbol: this.symbol,
         productType: this.productType,
