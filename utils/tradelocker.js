@@ -59,7 +59,7 @@ function authHeaders() {
 }
 
 // ================================
-// INSTRUMENT ID LADEN  ← FIX: richtiger Endpoint
+// INSTRUMENT ID LADEN
 // ================================
 async function loadInstrumentId() {
   const res = await axios.get(
@@ -71,17 +71,15 @@ async function loadInstrumentId() {
   const match = instruments.find(i => i.name === SYMBOL)
 
   if (!match) {
-    // Zeige alle verfügbaren Namen zum Debuggen
     const names = instruments.slice(0, 20).map(i => i.name)
     console.log('[TL] Verfügbare Instrumente (erste 20):', names)
     throw new Error(`[TL] Instrument ${SYMBOL} nicht gefunden`)
   }
 
   instrumentId = match.tradableInstrumentId
-  // TRADE routeId holen
-  routeId = match.routes?.find(r => r.type === 'TRADE')?.id
-         || match.routes?.[0]?.id
-         || null
+  routeId      = match.routes?.find(r => r.type === 'TRADE')?.id
+               || match.routes?.[0]?.id
+               || null
 
   console.log(`[TL] ${SYMBOL} → ID: ${instrumentId}, routeId: ${routeId}`)
 }
@@ -129,9 +127,16 @@ async function getOpenPosition() {
     { headers: authHeaders() }
   )
 
+  // Rohe Antwort loggen damit wir die Struktur sehen
+  console.log('[TL] Positions raw:', JSON.stringify(res.data))
+
   const positions = res.data.d?.positions || []
   if (positions.length === 0) return null
-  return positions[0]
+
+  const pos = positions[0]
+  // Alle möglichen ID-Felder loggen
+  console.log('[TL] Position Felder:', JSON.stringify(pos))
+  return pos
 }
 
 // ================================
@@ -145,10 +150,21 @@ async function closePosition() {
     return
   }
 
-  console.log(`[TL] Schließe Position: ${position.id}`)
+  // Alle möglichen ID-Felder probieren
+  const posId = position.id
+             || position.positionId
+             || position.orderId
+             || position.tradeId
+
+  if (!posId) {
+    console.log('[TL] Keine Position ID gefunden. Felder:', Object.keys(position))
+    return
+  }
+
+  console.log(`[TL] Schließe Position: ${posId}`)
 
   const res = await axios.delete(
-    `${BASE_URL}/trade/accounts/${accountId}/positions/${position.id}`,
+    `${BASE_URL}/trade/accounts/${accountId}/positions/${posId}`,
     { headers: authHeaders() }
   )
 
@@ -219,6 +235,17 @@ export async function getDebugInfo() {
     totalInstruments: instruments.length,
     sample: instruments.slice(0, 10)
   }
+}
+
+export async function getPositionDebug() {
+  if (!accessToken) await init()
+
+  const res = await axios.get(
+    `${BASE_URL}/trade/accounts/${accountId}/positions`,
+    { headers: authHeaders() }
+  )
+
+  return res.data
 }
 
 // Beim Start initialisieren
