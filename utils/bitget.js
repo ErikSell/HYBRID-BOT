@@ -54,9 +54,8 @@ class BitgetFutures {
     let side = 'buy';
     let tradeSide = 'open';
 
-    // Exit-Logik verbessert
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL erkannt → versuche Position zu schließen');
+      console.log('🔄 EXIT SIGNAL → versuche zu schließen');
       tradeSide = 'close';
     } 
     else if (action === 'buy' || position === 'long') {
@@ -81,6 +80,7 @@ class BitgetFutures {
         symbol: this.symbol,
         productType: this.productType,
         marginMode: "isolated",
+        marginCoin: "USDT",           // ← Das war der fehlende Parameter
         side: side,
         orderType: "market",
         size: quantity.toString(),
