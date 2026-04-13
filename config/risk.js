@@ -1,5 +1,5 @@
 const risk = {
-  lotSize: 0.01,
+  lotSize: 0.04,
 }
 
 export default risk
