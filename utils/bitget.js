@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'XAGUSDT';
-    this.fixedQuantity = 0.4;        // ca. 28-30 USDT
+    this.fixedQuantity = 0.4;        // ca. 28-30 USDT bei aktuellem Preis
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
   }
@@ -49,24 +49,34 @@ class BitgetFutures {
     const action = (signal.action || '').toLowerCase().trim();
     const position = (signal.position || '').toLowerCase().trim();
 
-    console.log(`🔍 Signal: Action="${action}" | Position="${position}"`);
+    console.log(`🔍 Signal empfangen → Action: "${action}" | Position: "${position}"`);
 
     let side = 'buy';
     let tradeSide = 'open';
 
+    // === EXIT LOGIK ===
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL → versuche zu schließen');
+      console.log('🔄 EXIT SIGNAL erkannt – Position wird geschlossen');
+
+      // Wichtig für Hedge Mode: Short schließen = Buy to close
+      if (action === 'buy') {
+        side = 'buy';     // Short schließen
+      } else {
+        side = 'sell';    // Long schließen
+      }
       tradeSide = 'close';
     } 
+    // === LONG ENTRY ===
     else if (action === 'buy' || position === 'long') {
       side = 'buy';
       tradeSide = 'open';
-      console.log('🟢 LONG Signal erkannt');
+      console.log('🟢 LONG Entry');
     } 
+    // === SHORT ENTRY ===
     else if (action === 'sell' || position === 'short') {
       side = 'sell';
       tradeSide = 'open';
-      console.log('🔴 SHORT Signal erkannt');
+      console.log('🔴 SHORT Entry');
     } 
     else {
       console.log('❌ Unbekanntes Signal');
@@ -80,7 +90,7 @@ class BitgetFutures {
         symbol: this.symbol,
         productType: this.productType,
         marginMode: "isolated",
-        marginCoin: "USDT",           // ← Das war der fehlende Parameter
+        marginCoin: "USDT",
         side: side,
         orderType: "market",
         size: quantity.toString(),
@@ -90,16 +100,4 @@ class BitgetFutures {
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG`);
-
-      return { status: 'success', action: actionText, quantity, order: result };
-    } catch (error) {
-      console.error(`[${new Date().toISOString()}] ❌ Bitget Fehler:`, error.response?.data || error.message);
-      throw error;
-    }
-  }
-}
-
-const bitgetUtils = new BitgetFutures();
-export { bitgetUtils };
-export default bitgetUtils;
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order erfolgreich: ${
