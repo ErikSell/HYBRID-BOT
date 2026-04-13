@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'ARBUSDT';
-    this.fixedQuantity = 100;           // ≈ 10 USDT bei aktuellem Preis ~0.10$
+    this.fixedQuantity = 100;           // ca. 10 USDT Notional
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
     this.marginMode = 'isolated';
@@ -13,10 +13,9 @@ class BitgetFutures {
 
   _getSignature(timestamp, method, endpoint, body = '') {
     const message = timestamp + method + endpoint + body;
-    return crypto
-      .createHmac('sha256', process.env.BITGET_API_SECRET)
-      .update(message)
-      .digest('base64');
+    return crypto.createHmac('sha256', process.env.BITGET_API_SECRET)
+                 .update(message)
+                 .digest('base64');
   }
 
   async _signedRequest(method, endpoint, data = {}) {
@@ -48,38 +47,38 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`⚠️ Leverage auf 1x + Isolated Margin (manuell prüfen)`);
+    console.log(`✅ Hedge Mode + Isolated Margin + 1x Leverage aktiv`);
   }
 
   async placeMarketOrder(signal) {
     const action = (signal.action || '').toLowerCase().trim();
     const position = (signal.position || '').toLowerCase().trim();
 
-    console.log(`🔍 Signal verarbeitet → Action: "${action}" | Position: "${position}" | Contracts from TV: ${signal.contracts}`);
+    console.log(`🔍 Signal: Action="${action}" | Position="${position}"`);
 
     let side = 'buy';
     let tradeSide = 'open';
 
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL erkannt → Position wird geschlossen');
+      console.log('🔄 EXIT SIGNAL → versuche zu schließen');
       tradeSide = 'close';
     } 
     else if (action === 'buy' || position === 'long') {
       side = 'buy';
       tradeSide = 'open';
-      console.log('🟢 LONG Signal erkannt');
+      console.log('🟢 LONG Signal');
     } 
     else if (action === 'sell' || position === 'short') {
       side = 'sell';
       tradeSide = 'open';
-      console.log('🔴 SHORT Signal erkannt');
+      console.log('🔴 SHORT Signal');
     } 
     else {
-      console.log('❌ Unbekanntes Signal ignoriert');
+      console.log('❌ Unbekanntes Signal');
       return { status: 'ignored' };
     }
 
-    const quantity = this.fixedQuantity;   // Immer feste Größe verwenden
+    const quantity = this.fixedQuantity;
 
     try {
       const orderData = {
@@ -97,16 +96,11 @@ class BitgetFutures {
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Isolated 1x) platziert: ${quantity} ARB`);
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order (Hedge Mode, Isolated 1x) platziert: ${quantity} ARB`);
 
-      return { 
-        status: 'success', 
-        action: actionText, 
-        quantity, 
-        order: result 
-      };
+      return { status: 'success', action: actionText, quantity, order: result };
     } catch (error) {
-      console.error(`[${new Date().toISOString()}] ❌ Bitget Order Fehler:`, error.response?.data || error.message);
+      console.error(`[${new Date().toISOString()}] ❌ Bitget Fehler:`, error.response?.data || error.message);
       throw error;
     }
   }
