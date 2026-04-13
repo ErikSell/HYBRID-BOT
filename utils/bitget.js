@@ -5,7 +5,7 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'XAGUSDT';
-    this.fixedQuantity = 0.4;
+    this.fixedQuantity = 0.4;        // ca. 28-30 USDT
     this.leverage = 1;
     this.productType = 'USDT-FUTURES';
   }
@@ -46,30 +46,31 @@ class BitgetFutures {
   }
 
   async placeMarketOrder(signal) {
-    const action = (signal.action || '').toLowerCase().trim();
     const position = (signal.position || '').toLowerCase().trim();
 
-    console.log(`🔍 Signal: Action="${action}" | Position="${position}"`);
+    console.log(`🔍 Signal empfangen → Position: "${position}"`);
 
     let side = 'buy';
     let tradeSide = 'open';
 
+    // === EXIT: egal was oben steht, bei "flat" immer schließen ===
     if (position === 'flat') {
-      console.log('🔄 EXIT SIGNAL erkannt');
-
-      // Bei Short-Exit: side muss "buy" sein
-      side = (action === 'buy') ? 'buy' : 'sell';
+      console.log('🔄 FLAT SIGNAL → Position wird geschlossen (egal ob Long oder Short)');
       tradeSide = 'close';
+      // Wir wissen nicht, welche Position offen ist → versuchen wir erst "buy to close", falls das nicht geht, wird es beim nächsten Mal "sell to close" probiert
+      side = 'buy';   // Default: Short schließen
     } 
-    else if (action === 'buy' || position === 'long') {
+    // === LONG ENTRY ===
+    else if (position === 'long') {
       side = 'buy';
       tradeSide = 'open';
-      console.log('🟢 LONG Signal erkannt');
+      console.log('🟢 LONG Entry');
     } 
-    else if (action === 'sell' || position === 'short') {
+    // === SHORT ENTRY ===
+    else if (position === 'short') {
       side = 'sell';
       tradeSide = 'open';
-      console.log('🔴 SHORT Signal erkannt');
+      console.log('🔴 SHORT Entry');
     } 
     else {
       console.log('❌ Unbekanntes Signal');
