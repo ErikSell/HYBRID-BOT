@@ -145,6 +145,7 @@ async function getOpenPosition() {
 
 // ================================
 // POSITION SCHLIESSEN
+// ← FIX: richtiger Endpoint + qty 0 für vollen Close
 // ================================
 async function closePosition() {
   const position = await getOpenPosition()
@@ -157,8 +158,11 @@ async function closePosition() {
   console.log(`[TL] Schließe Position: ${position.id}`)
 
   const res = await axios.delete(
-    `${BASE_URL}/trade/accounts/${accountId}/positions/${position.id}`,
-    { headers: authHeaders() }
+    `${BASE_URL}/trade/positions/${position.id}`,
+    {
+      headers: authHeaders(),
+      data: { qty: 0 }  // 0 = vollständig schließen
+    }
   )
 
   console.log(`[TL] Position geschlossen:`, res.data)
