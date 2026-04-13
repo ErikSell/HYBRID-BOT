@@ -4,7 +4,7 @@ import risk from '../config/risk.js'
 // ================================
 // CONFIG
 // ================================
-const BASE_URL = 'https://live.tradelocker.com/backend-api'
+const BASE_URL = 'https://demo.tradelocker.com/backend-api'
 const EMAIL    = process.env.TL_EMAIL
 const PASSWORD = process.env.TL_PASSWORD
 const SERVER   = process.env.TL_SERVER
