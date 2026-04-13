@@ -57,9 +57,9 @@ class BitgetFutures {
     if (position === 'flat') {
       console.log('🔄 EXIT SIGNAL erkannt → versuche zu schließen');
       if (action === 'buy') {
-        side = 'buy';      // Short schließen
+        side = 'buy';
       } else {
-        side = 'sell';     // Long schließen
+        side = 'sell';
       }
       tradeSide = 'close';
     } 
