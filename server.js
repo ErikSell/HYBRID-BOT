@@ -16,11 +16,20 @@ app.post('/webhook', async (req, res) => {
   res.json({ ok: true })
 })
 
-// TEMPORÄR — zum Debuggen, danach wieder löschen
 app.get('/debug', async (req, res) => {
   try {
     const { getDebugInfo } = await import('./utils/tradelocker.js')
     const info = await getDebugInfo()
+    res.json(info)
+  } catch (err) {
+    res.json({ error: err.message })
+  }
+})
+
+app.get('/debug-positions', async (req, res) => {
+  try {
+    const { getPositionDebug } = await import('./utils/tradelocker.js')
+    const info = await getPositionDebug()
     res.json(info)
   } catch (err) {
     res.json({ error: err.message })
