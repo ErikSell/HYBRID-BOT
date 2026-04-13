@@ -10,7 +10,6 @@ const PASSWORD = process.env.TL_PASSWORD
 const SERVER   = process.env.TL_SERVER
 const SYMBOL   = 'XAGUSD'
 
-// Token-Cache
 let accessToken  = null
 let accountId    = null
 let accNum       = null
@@ -45,27 +44,45 @@ async function loadAccount() {
   }
 
   accountId = accounts[0].id
-  accNum    = 1
+  accNum    = accounts[0].accNum
   console.log(`[TL] Account: ${accountId} (accNum: ${accNum})`)
 }
 
 // ================================
-// INSTRUMENT ID LADEN
+// AUTH HEADERS
+// ================================
+function authHeaders() {
+  return {
+    Authorization: `Bearer ${accessToken}`,
+    accNum:        accNum,
+  }
+}
+
+// ================================
+// INSTRUMENT ID LADEN  ← FIX: richtiger Endpoint
 // ================================
 async function loadInstrumentId() {
-  const res = await axios.get(`${BASE_URL}/trade/instruments`, {
-    headers: authHeaders()
-  })
+  const res = await axios.get(
+    `${BASE_URL}/trade/accounts/${accountId}/instruments`,
+    { headers: authHeaders() }
+  )
 
   const instruments = res.data.d?.instruments || []
   const match = instruments.find(i => i.name === SYMBOL)
 
   if (!match) {
+    // Zeige alle verfügbaren Namen zum Debuggen
+    const names = instruments.slice(0, 20).map(i => i.name)
+    console.log('[TL] Verfügbare Instrumente (erste 20):', names)
     throw new Error(`[TL] Instrument ${SYMBOL} nicht gefunden`)
   }
 
   instrumentId = match.tradableInstrumentId
-  routeId      = match.routes?.[0]?.id || null
+  // TRADE routeId holen
+  routeId = match.routes?.find(r => r.type === 'TRADE')?.id
+         || match.routes?.[0]?.id
+         || null
+
   console.log(`[TL] ${SYMBOL} → ID: ${instrumentId}, routeId: ${routeId}`)
 }
 
@@ -77,16 +94,6 @@ async function init() {
   await loadAccount()
   await loadInstrumentId()
   console.log('[TL] Initialisierung abgeschlossen')
-}
-
-// ================================
-// AUTH HEADERS
-// ================================
-function authHeaders() {
-  return {
-    Authorization: `Bearer ${accessToken}`,
-    accNum:        accNum,
-  }
 }
 
 // ================================
@@ -186,17 +193,17 @@ export async function handleSignal(position) {
 }
 
 // ================================
-// DEBUG FUNKTION
+// DEBUG
 // ================================
 export async function getDebugInfo() {
   if (!accessToken) await init()
 
-  const res = await axios.get(`${BASE_URL}/trade/instruments`, {
-    headers: authHeaders()
-  })
+  const res = await axios.get(
+    `${BASE_URL}/trade/accounts/${accountId}/instruments`,
+    { headers: authHeaders() }
+  )
 
   const instruments = res.data.d?.instruments || []
-
   const silver = instruments.filter(i =>
     i.name?.includes('XAG') ||
     i.name?.includes('Silver') ||
