@@ -5,10 +5,9 @@ class BitgetFutures {
   constructor() {
     this.baseURL = 'https://api.bitget.com';
     this.symbol = 'XAGUSDT';
-    this.leverage = 1;                    // Immer 1x
+    this.fixedQuantity = 0.4;        // ca. 28-30 USDT bei aktuellem Preis (~74$)
+    this.leverage = 1;
     this.productType = 'USDT-FUTURES';
-    this.marginMode = 'isolated';
-    this.riskPercent = 95;                // 95% des verfügbaren USDT einsetzen
   }
 
   _getSignature(timestamp, method, endpoint, body = '') {
@@ -47,7 +46,7 @@ class BitgetFutures {
   }
 
   async initLeverage() {
-    console.log(`✅ XAGUSDT | 1x Leverage | Isolated Margin | ~95% All-in Modus`);
+    console.log(`✅ XAGUSDT Silver | 1x Leverage | Isolated Margin | ~28 USDT pro Trade`);
   }
 
   async placeMarketOrder(signal) {
@@ -78,34 +77,26 @@ class BitgetFutures {
       return { status: 'ignored' };
     }
 
+    const quantity = this.fixedQuantity;
+
     try {
-      // Aktuellen USDT Balance holen
-      const balanceRes = await this._signedRequest('GET', `/api/v2/mix/account/account?symbol=${this.symbol}&marginCoin=USDT`);
-      const availableUSDT = parseFloat(balanceRes.data?.available || 30);   // Fallback 30 USDT
-
-      // Quantity berechnen: fast all-in mit 1x Leverage
-      let quantity = (availableUSDT * this.riskPercent / 100) / 74;   // Silberpreis ca. 74$
-      quantity = Math.max(quantity, 0.1); 
-      quantity = parseFloat(quantity.toFixed(3));   // Precision für XAGUSDT
-
-      console.log(`💰 Verfügbar: ${availableUSDT.toFixed(2)} USDT → Kaufe ${quantity} XAG (1x Leverage)`);
-
+      // Minimaler Order-Body für XAGUSDT
       const orderData = {
         symbol: this.symbol,
         productType: this.productType,
-        marginMode: this.marginMode,
+        marginMode: 'isolated',
         marginCoin: 'USDT',
         side: side,
         orderType: 'market',
         size: quantity.toString(),
-        tradeSide: tradeSide,
-        leverage: this.leverage.toString()
+        tradeSide: tradeSide
+        // leverage wird hier weggelassen, da 1x Default ist
       };
 
       const result = await this._signedRequest('POST', '/api/v2/mix/order/place-order', orderData);
 
       const actionText = position === 'flat' ? 'CLOSE' : (side === 'buy' ? 'LONG' : 'SHORT');
-      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG`);
+      console.log(`[${new Date().toISOString()}] ✅ ${actionText} Order platziert: ${quantity} XAG (~28 USDT)`);
 
       return { status: 'success', action: actionText, quantity, order: result };
     } catch (error) {
