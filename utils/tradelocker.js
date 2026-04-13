@@ -10,14 +10,15 @@ const PASSWORD = process.env.TL_PASSWORD
 const SERVER   = process.env.TL_SERVER
 const SYMBOL   = 'XAGUSD'
 
-// Token-Cache — wird nach Login befüllt
+// Token-Cache
 let accessToken  = null
 let accountId    = null
 let accNum       = null
 let instrumentId = null
+let routeId      = null
 
 // ================================
-// AUTH — JWT Token holen
+// AUTH
 // ================================
 async function login() {
   console.log('[TL] Logging in...')
@@ -26,13 +27,12 @@ async function login() {
     password: PASSWORD,
     server:   SERVER,
   })
-
   accessToken = res.data.accessToken
-  console.log('[TL] Login successful')
+  console.log('[TL] Login erfolgreich')
 }
 
 // ================================
-// ACCOUNT ID holen
+// ACCOUNT LADEN
 // ================================
 async function loadAccount() {
   const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
@@ -44,21 +44,17 @@ async function loadAccount() {
     throw new Error('[TL] Keine Accounts gefunden')
   }
 
-  // Ersten Account nehmen
   accountId = accounts[0].id
   accNum    = 1
-  console.log(`[TL] Account geladen: ${accountId} (accNum: ${accNum})`)
+  console.log(`[TL] Account: ${accountId} (accNum: ${accNum})`)
 }
 
 // ================================
-// INSTRUMENT ID für XAGUSD holen
+// INSTRUMENT ID LADEN
 // ================================
 async function loadInstrumentId() {
   const res = await axios.get(`${BASE_URL}/trade/instruments`, {
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      accNum: accNum,
-    }
+    headers: authHeaders()
   })
 
   const instruments = res.data.d?.instruments || []
@@ -69,11 +65,12 @@ async function loadInstrumentId() {
   }
 
   instrumentId = match.tradableInstrumentId
-  console.log(`[TL] Instrument ID für ${SYMBOL}: ${instrumentId}`)
+  routeId      = match.routes?.[0]?.id || null
+  console.log(`[TL] ${SYMBOL} → ID: ${instrumentId}, routeId: ${routeId}`)
 }
 
 // ================================
-// INIT — einmal beim Start aufrufen
+// INIT
 // ================================
 async function init() {
   await login()
@@ -83,12 +80,12 @@ async function init() {
 }
 
 // ================================
-// HILFSFUNKTION — Auth Header
+// AUTH HEADERS
 // ================================
 function authHeaders() {
   return {
     Authorization: `Bearer ${accessToken}`,
-    accNum: accNum,
+    accNum:        accNum,
   }
 }
 
@@ -96,17 +93,18 @@ function authHeaders() {
 // ORDER PLATZIEREN
 // ================================
 async function placeOrder(side) {
-  console.log(`[TL] Platziere Order: ${side} | Lots: ${risk.lotSize}`)
+  console.log(`[TL] Order: ${side} | Lots: ${risk.lotSize}`)
 
   const res = await axios.post(
     `${BASE_URL}/trade/accounts/${accountId}/orders`,
     {
       tradableInstrumentId: instrumentId,
-      type:       'market',
-      side:       side,        // 'buy' oder 'sell'
-      qty:        risk.lotSize,
-      validity:   'IOC',       // Market Orders müssen IOC sein
-      price:      0,           // 0 bei Market Orders
+      routeId:              routeId,
+      type:                 'market',
+      side:                 side,
+      qty:                  risk.lotSize,
+      validity:             'IOC',
+      price:                0,
     },
     { headers: authHeaders() }
   )
@@ -126,8 +124,6 @@ async function getOpenPosition() {
 
   const positions = res.data.d?.positions || []
   if (positions.length === 0) return null
-
-  // Erste offene Position zurückgeben
   return positions[0]
 }
 
@@ -138,17 +134,14 @@ async function closePosition() {
   const position = await getOpenPosition()
 
   if (!position) {
-    console.log('[TL] Keine offene Position zum Schließen')
+    console.log('[TL] Keine offene Position')
     return
   }
 
-  const positionId = position.id
-  const closeSide  = position.side === 'buy' ? 'sell' : 'buy'
-
-  console.log(`[TL] Schließe Position ${positionId} mit ${closeSide}`)
+  console.log(`[TL] Schließe Position: ${position.id}`)
 
   const res = await axios.delete(
-    `${BASE_URL}/trade/accounts/${accountId}/positions/${positionId}`,
+    `${BASE_URL}/trade/accounts/${accountId}/positions/${position.id}`,
     { headers: authHeaders() }
   )
 
@@ -157,31 +150,25 @@ async function closePosition() {
 }
 
 // ================================
-// HAUPTFUNKTION — vom Webhook aufgerufen
+// HAUPTFUNKTION
 // ================================
 export async function handleSignal(position) {
   try {
-    // Token könnte abgelaufen sein → neu einloggen
-    if (!accessToken) {
-      await init()
-    }
+    if (!accessToken) await init()
 
-    console.log(`[TL] Signal empfangen: ${position}`)
+    console.log(`[TL] Signal: ${position}`)
 
     if (position === 'long') {
-      await closePosition()  // Eventuell offene Short schließen
+      await closePosition()
       await placeOrder('buy')
     }
-
     else if (position === 'short') {
-      await closePosition()  // Eventuell offene Long schließen
+      await closePosition()
       await placeOrder('sell')
     }
-
     else if (position === 'flat') {
       await closePosition()
     }
-
     else {
       console.log(`[TL] Unbekanntes Signal: ${position}`)
     }
@@ -189,17 +176,45 @@ export async function handleSignal(position) {
   } catch (err) {
     console.error('[TL] Fehler:', err.response?.data || err.message)
 
-    // Bei Auth-Fehler → neu einloggen und nochmal versuchen
     if (err.response?.status === 401) {
       console.log('[TL] Token abgelaufen — neu einloggen...')
       accessToken = null
       await init()
-      await handleSignal(position) // Retry
+      await handleSignal(position)
     }
   }
 }
 
-// Beim Start direkt initialisieren
+// ================================
+// DEBUG FUNKTION
+// ================================
+export async function getDebugInfo() {
+  if (!accessToken) await init()
+
+  const res = await axios.get(`${BASE_URL}/trade/instruments`, {
+    headers: authHeaders()
+  })
+
+  const instruments = res.data.d?.instruments || []
+
+  const silver = instruments.filter(i =>
+    i.name?.includes('XAG') ||
+    i.name?.includes('Silver') ||
+    i.name?.includes('SILVER')
+  )
+
+  return {
+    accountId,
+    accNum,
+    instrumentId,
+    routeId,
+    silverMatches: silver,
+    totalInstruments: instruments.length,
+    sample: instruments.slice(0, 10)
+  }
+}
+
+// Beim Start initialisieren
 init().catch(err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
 })
