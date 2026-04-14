@@ -6,13 +6,17 @@ app.use(express.json())
 
 app.post('/webhook', async (req, res) => {
   console.log('[WEBHOOK] Empfangen:', req.body)
-  const { position } = req.body
+  const { position, symbol } = req.body
 
   if (!position) {
     return res.status(400).json({ error: 'Kein position-Feld' })
   }
 
-  await handleSignal(position)
+  if (!symbol) {
+    return res.status(400).json({ error: 'Kein symbol-Feld' })
+  }
+
+  await handleSignal(position, symbol)
   res.json({ ok: true })
 })
 
