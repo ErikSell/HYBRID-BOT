@@ -8,13 +8,14 @@ const BASE_URL = 'https://demo.tradelocker.com/backend-api'
 const EMAIL    = process.env.TL_EMAIL
 const PASSWORD = process.env.TL_PASSWORD
 const SERVER   = process.env.TL_SERVER
-const SYMBOL   = 'XAGUSD'
 
 let accessToken  = null
 let accountId    = null
 let accNum       = null
-let instrumentId = null
-let routeId      = null
+
+// Map: symbol → { instrumentId, routeId }
+// Wird beim Start mit allen 252 Instruments befüllt
+const instrumentMap = new Map()
 
 // ================================
 // AUTH
@@ -59,29 +60,28 @@ function authHeaders() {
 }
 
 // ================================
-// INSTRUMENT ID LADEN
+// ALLE INSTRUMENTE LADEN
 // ================================
-async function loadInstrumentId() {
+async function loadAllInstruments() {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/instruments`,
     { headers: authHeaders() }
   )
 
   const instruments = res.data.d?.instruments || []
-  const match = instruments.find(i => i.name === SYMBOL)
 
-  if (!match) {
-    const names = instruments.slice(0, 20).map(i => i.name)
-    console.log('[TL] Verfügbare Instrumente (erste 20):', names)
-    throw new Error(`[TL] Instrument ${SYMBOL} nicht gefunden`)
-  }
+  instruments.forEach(i => {
+    const tradeRoute = i.routes?.find(r => r.type === 'TRADE')?.id
+                    || i.routes?.[0]?.id
+                    || null
 
-  instrumentId = match.tradableInstrumentId
-  routeId      = match.routes?.find(r => r.type === 'TRADE')?.id
-               || match.routes?.[0]?.id
-               || null
+    instrumentMap.set(i.name, {
+      instrumentId: i.tradableInstrumentId,
+      routeId:      tradeRoute,
+    })
+  })
 
-  console.log(`[TL] ${SYMBOL} → ID: ${instrumentId}, routeId: ${routeId}`)
+  console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
 // ================================
@@ -90,15 +90,27 @@ async function loadInstrumentId() {
 async function init() {
   await login()
   await loadAccount()
-  await loadInstrumentId()
+  await loadAllInstruments()
   console.log('[TL] Initialisierung abgeschlossen')
+}
+
+// ================================
+// INSTRUMENT FÜR SYMBOL HOLEN
+// ================================
+function getInstrument(symbol) {
+  const instrument = instrumentMap.get(symbol)
+  if (!instrument) {
+    throw new Error(`[TL] Symbol ${symbol} nicht gefunden. Verfügbar: ${[...instrumentMap.keys()].join(', ')}`)
+  }
+  return instrument
 }
 
 // ================================
 // ORDER PLATZIEREN
 // ================================
-async function placeOrder(side) {
-  console.log(`[TL] Order: ${side} | Lots: ${risk.lotSize}`)
+async function placeOrder(side, symbol) {
+  const { instrumentId, routeId } = getInstrument(symbol)
+  console.log(`[TL] Order: ${side} ${symbol} | Lots: ${risk.lotSize}`)
 
   const res = await axios.post(
     `${BASE_URL}/trade/accounts/${accountId}/orders`,
@@ -119,9 +131,9 @@ async function placeOrder(side) {
 }
 
 // ================================
-// OFFENE POSITION HOLEN
+// OFFENE POSITION FÜR SYMBOL HOLEN
 // ================================
-async function getOpenPosition() {
+async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
     { headers: authHeaders() }
@@ -130,38 +142,42 @@ async function getOpenPosition() {
   const positions = res.data.d?.positions || []
   if (positions.length === 0) return null
 
-  // Positionen kommen als Array von Arrays:
-  // [id, instrumentId, routeId, side, qty, price, ...]
-  const pos = positions[0]
+  // Instrument ID für dieses Symbol holen
+  const { instrumentId } = getInstrument(symbol)
+
+  // Position für dieses Symbol finden
+  // Array Format: [id, instrumentId, routeId, side, qty, price, ...]
+  const match = positions.find(pos => String(pos[1]) === String(instrumentId))
+  if (!match) return null
+
   return {
-    id:           pos[0],
-    instrumentId: pos[1],
-    routeId:      pos[2],
-    side:         pos[3],
-    qty:          pos[4],
-    price:        pos[5],
+    id:           match[0],
+    instrumentId: match[1],
+    routeId:      match[2],
+    side:         match[3],
+    qty:          match[4],
+    price:        match[5],
   }
 }
 
 // ================================
 // POSITION SCHLIESSEN
-// ← FIX: richtiger Endpoint + qty 0 für vollen Close
 // ================================
-async function closePosition() {
-  const position = await getOpenPosition()
+async function closePosition(symbol) {
+  const position = await getOpenPosition(symbol)
 
   if (!position) {
-    console.log('[TL] Keine offene Position')
+    console.log(`[TL] Keine offene Position für ${symbol}`)
     return
   }
 
-  console.log(`[TL] Schließe Position: ${position.id}`)
+  console.log(`[TL] Schließe Position ${position.id} für ${symbol}`)
 
   const res = await axios.delete(
     `${BASE_URL}/trade/positions/${position.id}`,
     {
       headers: authHeaders(),
-      data: { qty: 0 }  // 0 = vollständig schließen
+      data: { qty: 0 }
     }
   )
 
@@ -172,22 +188,22 @@ async function closePosition() {
 // ================================
 // HAUPTFUNKTION
 // ================================
-export async function handleSignal(position) {
+export async function handleSignal(position, symbol) {
   try {
     if (!accessToken) await init()
 
-    console.log(`[TL] Signal: ${position}`)
+    console.log(`[TL] Signal: ${position} | Symbol: ${symbol}`)
 
     if (position === 'long') {
-      await closePosition()
-      await placeOrder('buy')
+      await closePosition(symbol)
+      await placeOrder('buy', symbol)
     }
     else if (position === 'short') {
-      await closePosition()
-      await placeOrder('sell')
+      await closePosition(symbol)
+      await placeOrder('sell', symbol)
     }
     else if (position === 'flat') {
-      await closePosition()
+      await closePosition(symbol)
     }
     else {
       console.log(`[TL] Unbekanntes Signal: ${position}`)
@@ -200,7 +216,7 @@ export async function handleSignal(position) {
       console.log('[TL] Token abgelaufen — neu einloggen...')
       accessToken = null
       await init()
-      await handleSignal(position)
+      await handleSignal(position, symbol)
     }
   }
 }
@@ -211,26 +227,14 @@ export async function handleSignal(position) {
 export async function getDebugInfo() {
   if (!accessToken) await init()
 
-  const res = await axios.get(
-    `${BASE_URL}/trade/accounts/${accountId}/instruments`,
-    { headers: authHeaders() }
-  )
-
-  const instruments = res.data.d?.instruments || []
-  const silver = instruments.filter(i =>
-    i.name?.includes('XAG') ||
-    i.name?.includes('Silver') ||
-    i.name?.includes('SILVER')
-  )
-
   return {
     accountId,
     accNum,
-    instrumentId,
-    routeId,
-    silverMatches: silver,
-    totalInstruments: instruments.length,
-    sample: instruments.slice(0, 10)
+    totalInstruments: instrumentMap.size,
+    instruments: [...instrumentMap.entries()].map(([name, data]) => ({
+      name,
+      ...data
+    }))
   }
 }
 
