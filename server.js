@@ -63,3 +63,11 @@ app.get('/risk', async (req, res) => {
 })
 
 app.listen(3000, () => console.log('[SERVER] Läuft auf Port 3000'))
+app.get('/debug-balance', async (req, res) => {
+  try {
+    const { debugBalance } = await import('./utils/tradelocker.js')
+    res.json(await debugBalance())
+  } catch (err) {
+    res.json({ error: err.message })
+  }
+})
