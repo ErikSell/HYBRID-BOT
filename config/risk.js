@@ -1,11 +1,20 @@
 // ============================================================
-// RISK ENGINE v3.0
-// Kein SL/TP — Lot-Stufen System + vollständiges Winrate-Modell
+// RISK ENGINE v3.0 — Mit persistenter Trade History (Upstash)
 // ============================================================
+import { Redis } from '@upstash/redis'
 
-const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '4900')
+const redis = new Redis({
+  url:   process.env.UPSTASH_REDIS_REST_URL,
+  token: process.env.UPSTASH_REDIS_REST_TOKEN,
+})
 
-const state = {
+const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '5000')
+const REDIS_KEY       = 'hybrid-bot:state'
+
+// ============================================================
+// STATE — wird aus Redis geladen
+// ============================================================
+let state = {
   tradeHistory:           [],
   initialCapital:         INITIAL_CAPITAL,
   tradingBalance:         INITIAL_CAPITAL,
@@ -13,6 +22,47 @@ const state = {
   hardCapActive:          false,
   hardCapTradesRemaining: 0,
   recoveryBoostActive:    false,
+}
+
+// ============================================================
+// STATE LADEN AUS REDIS
+// ============================================================
+export async function loadState() {
+  try {
+    const saved = await redis.get(REDIS_KEY)
+    if (saved) {
+      state = { ...state, ...saved }
+      console.log(`[RISK] State geladen — ${state.tradeHistory.length} Trades in History`)
+    } else {
+      // Erste Ausführung — Startzustand mit deinen bisherigen Trades vorbelegen
+      state.tradeHistory = [
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-01T00:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-02T00:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-03T00:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-04T00:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-05T00:00:00.000Z' },
+        { result: 'WIN',  profit: 10,  timestamp: '2026-04-06T00:00:00.000Z' },
+        { result: 'WIN',  profit: 10,  timestamp: '2026-04-07T00:00:00.000Z' },
+      ]
+      state.tradingBalance = 4984.21  // deine echte aktuelle Balance
+      await saveState()
+      console.log('[RISK] Startzustand mit bisherigen Trades angelegt')
+    }
+  } catch (err) {
+    console.error('[RISK] State laden Fehler:', err.message)
+  }
+}
+
+// ============================================================
+// STATE SPEICHERN IN REDIS
+// ============================================================
+async function saveState() {
+  try {
+    await redis.set(REDIS_KEY, state)
+    console.log('[RISK] State gespeichert')
+  } catch (err) {
+    console.error('[RISK] State speichern Fehler:', err.message)
+  }
 }
 
 // ============================================================
@@ -99,7 +149,7 @@ function getUmlage(profitAmount) {
 }
 
 // ============================================================
-// HARD CAP PRÜFEN
+// HARD CAP
 // ============================================================
 function checkHardCap() {
   const last3   = state.tradeHistory.slice(-3)
@@ -109,7 +159,7 @@ function checkHardCap() {
     state.hardCapActive          = true
     state.hardCapTradesRemaining = 2
     state.recoveryBoostActive    = false
-    console.log('[RISK] ⚠️  HARD CAP AKTIVIERT — 3 Losses in a row → 0.01 Lots für nächste 2 Trades')
+    console.log('[RISK] ⚠️ HARD CAP AKTIVIERT!')
   }
 }
 
@@ -125,7 +175,7 @@ function checkRecovery() {
     const transfer = Math.min(needed, state.savingsBalance)
     state.tradingBalance += transfer
     state.savingsBalance -= transfer
-    console.log(`[RISK] 🔄 RECOVERY — $${transfer.toFixed(2)} von Savings → Trading`)
+    console.log(`[RISK] 🔄 RECOVERY — $${transfer.toFixed(2)} transferiert`)
   }
 }
 
@@ -170,19 +220,17 @@ function printTradeLog() {
 // ============================================================
 // TRADE AUFZEICHNEN
 // ============================================================
-export function recordTrade(result, profitAmount = 0, liveBalance = null) {
+export async function recordTrade(result, profitAmount = 0, liveBalance = null) {
   state.tradeHistory.push({
     result,
     profit:    profitAmount,
     timestamp: new Date().toISOString(),
   })
 
-  // Live Balance überschreibt berechnete Balance wenn verfügbar
+  // Live Balance übernehmen
   if (liveBalance !== null) {
     state.tradingBalance = liveBalance
-    console.log(`[RISK] Live Balance übernommen: $${liveBalance.toFixed(2)}`)
   } else {
-    // Fallback: intern berechnen
     if (result === 'WIN' && profitAmount > 0) {
       const umlage = getUmlage(profitAmount)
       state.savingsBalance += umlage
@@ -193,7 +241,7 @@ export function recordTrade(result, profitAmount = 0, liveBalance = null) {
     }
   }
 
-  // Hard Cap Counter runterzählen
+  // Hard Cap Counter
   if (state.hardCapActive && state.hardCapTradesRemaining > 0) {
     state.hardCapTradesRemaining--
     if (state.hardCapTradesRemaining === 0) {
@@ -205,17 +253,16 @@ export function recordTrade(result, profitAmount = 0, liveBalance = null) {
     }
   }
 
-  // Recovery Boost verbrauchen
   if (state.recoveryBoostActive) {
     state.recoveryBoostActive = false
     console.log('[RISK] Recovery Boost verbraucht')
   }
 
-  // Hard Cap prüfen
   checkHardCap()
-
-  // Trade Log ausgeben
   printTradeLog()
+
+  // In Redis speichern
+  await saveState()
 }
 
 // ============================================================
