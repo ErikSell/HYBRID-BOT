@@ -1,20 +1,15 @@
 import axios from 'axios'
-import risk from '../config/risk.js'
+import { getLotSize, recordTrade, getState } from '../config/risk.js'
 
-// ================================
-// CONFIG
-// ================================
 const BASE_URL = 'https://demo.tradelocker.com/backend-api'
 const EMAIL    = process.env.TL_EMAIL
 const PASSWORD = process.env.TL_PASSWORD
 const SERVER   = process.env.TL_SERVER
 
-let accessToken  = null
-let accountId    = null
-let accNum       = null
+let accessToken = null
+let accountId   = null
+let accNum      = null
 
-// Map: symbol → { instrumentId, routeId }
-// Wird beim Start mit allen 252 Instruments befüllt
 const instrumentMap = new Map()
 
 // ================================
@@ -23,9 +18,7 @@ const instrumentMap = new Map()
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
-    email:    EMAIL,
-    password: PASSWORD,
-    server:   SERVER,
+    email: EMAIL, password: PASSWORD, server: SERVER,
   })
   accessToken = res.data.accessToken
   console.log('[TL] Login erfolgreich')
@@ -38,12 +31,8 @@ async function loadAccount() {
   const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
     headers: { Authorization: `Bearer ${accessToken}` }
   })
-
   const accounts = res.data.accounts
-  if (!accounts || accounts.length === 0) {
-    throw new Error('[TL] Keine Accounts gefunden')
-  }
-
+  if (!accounts || accounts.length === 0) throw new Error('[TL] Keine Accounts')
   accountId = accounts[0].id
   accNum    = accounts[0].accNum
   console.log(`[TL] Account: ${accountId} (accNum: ${accNum})`)
@@ -53,10 +42,7 @@ async function loadAccount() {
 // AUTH HEADERS
 // ================================
 function authHeaders() {
-  return {
-    Authorization: `Bearer ${accessToken}`,
-    accNum:        accNum,
-  }
+  return { Authorization: `Bearer ${accessToken}`, accNum }
 }
 
 // ================================
@@ -67,20 +53,15 @@ async function loadAllInstruments() {
     `${BASE_URL}/trade/accounts/${accountId}/instruments`,
     { headers: authHeaders() }
   )
-
   const instruments = res.data.d?.instruments || []
-
   instruments.forEach(i => {
     const tradeRoute = i.routes?.find(r => r.type === 'TRADE')?.id
-                    || i.routes?.[0]?.id
-                    || null
-
+                    || i.routes?.[0]?.id || null
     instrumentMap.set(i.name, {
       instrumentId: i.tradableInstrumentId,
       routeId:      tradeRoute,
     })
   })
-
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
@@ -95,13 +76,11 @@ async function init() {
 }
 
 // ================================
-// INSTRUMENT FÜR SYMBOL HOLEN
+// INSTRUMENT HOLEN
 // ================================
 function getInstrument(symbol) {
   const instrument = instrumentMap.get(symbol)
-  if (!instrument) {
-    throw new Error(`[TL] Symbol ${symbol} nicht gefunden. Verfügbar: ${[...instrumentMap.keys()].join(', ')}`)
-  }
+  if (!instrument) throw new Error(`[TL] Symbol ${symbol} nicht gefunden`)
   return instrument
 }
 
@@ -110,18 +89,20 @@ function getInstrument(symbol) {
 // ================================
 async function placeOrder(side, symbol) {
   const { instrumentId, routeId } = getInstrument(symbol)
-  console.log(`[TL] Order: ${side} ${symbol} | Lots: ${risk.lotSize}`)
+  const lots = getLotSize()
+
+  console.log(`[TL] Order: ${side} ${symbol} | Lots: ${lots}`)
 
   const res = await axios.post(
     `${BASE_URL}/trade/accounts/${accountId}/orders`,
     {
       tradableInstrumentId: instrumentId,
-      routeId:              routeId,
-      type:                 'market',
-      side:                 side,
-      qty:                  risk.lotSize,
-      validity:             'IOC',
-      price:                0,
+      routeId,
+      type:     'market',
+      side,
+      qty:      lots,
+      validity: 'IOC',
+      price:    0,
     },
     { headers: authHeaders() }
   )
@@ -131,7 +112,7 @@ async function placeOrder(side, symbol) {
 }
 
 // ================================
-// OFFENE POSITION FÜR SYMBOL HOLEN
+// OFFENE POSITION HOLEN
 // ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
@@ -142,47 +123,92 @@ async function getOpenPosition(symbol) {
   const positions = res.data.d?.positions || []
   if (positions.length === 0) return null
 
-  // Instrument ID für dieses Symbol holen
   const { instrumentId } = getInstrument(symbol)
-
-  // Position für dieses Symbol finden
-  // Array Format: [id, instrumentId, routeId, side, qty, price, ...]
   const match = positions.find(pos => String(pos[1]) === String(instrumentId))
   if (!match) return null
 
   return {
-    id:           match[0],
-    instrumentId: match[1],
-    routeId:      match[2],
-    side:         match[3],
-    qty:          match[4],
-    price:        match[5],
+    id:    match[0],
+    side:  match[3],
+    qty:   match[4],
+    price: match[5],
   }
 }
 
 // ================================
-// POSITION SCHLIESSEN
+// P&L AUS HISTORY HOLEN
+// Nach Position-Close aus ordersHistory lesen
+// ================================
+async function getLastPnL(symbol) {
+  try {
+    const { instrumentId } = getInstrument(symbol)
+
+    const res = await axios.get(
+      `${BASE_URL}/trade/accounts/${accountId}/ordersHistory`,
+      { headers: authHeaders() }
+    )
+
+    const orders  = res.data.d?.ordersHistory || []
+    const fields  = res.data.d?.fields || []
+    const pnlIdx  = fields.indexOf('realizedPnL') !== -1
+                  ? fields.indexOf('realizedPnL')
+                  : fields.indexOf('pnl')
+    const instrIdx = fields.indexOf('tradableInstrumentId')
+
+    if (pnlIdx === -1 || orders.length === 0) return null
+
+    // Letzten abgeschlossenen Trade für dieses Symbol finden
+    const match = [...orders]
+      .reverse()
+      .find(o => String(o[instrIdx]) === String(instrumentId))
+
+    if (!match) return null
+
+    const pnl = parseFloat(match[pnlIdx])
+    console.log(`[TL] P&L aus History: $${pnl.toFixed(2)}`)
+    return pnl
+
+  } catch (err) {
+    console.error('[TL] P&L Fetch Fehler:', err.message)
+    return null
+  }
+}
+
+// ================================
+// POSITION SCHLIESSEN + TRADE AUFZEICHNEN
 // ================================
 async function closePosition(symbol) {
   const position = await getOpenPosition(symbol)
 
   if (!position) {
     console.log(`[TL] Keine offene Position für ${symbol}`)
-    return
+    return false
   }
 
   console.log(`[TL] Schließe Position ${position.id} für ${symbol}`)
 
-  const res = await axios.delete(
+  await axios.delete(
     `${BASE_URL}/trade/positions/${position.id}`,
-    {
-      headers: authHeaders(),
-      data: { qty: 0 }
-    }
+    { headers: authHeaders(), data: { qty: 0 } }
   )
 
-  console.log(`[TL] Position geschlossen:`, res.data)
-  return res.data
+  console.log(`[TL] Position geschlossen`)
+
+  // Kurz warten damit TradeLocker History aktualisiert
+  await new Promise(r => setTimeout(r, 1500))
+
+  // P&L aus History holen
+  const pnl = await getLastPnL(symbol)
+
+  if (pnl !== null) {
+    const result = pnl >= 0 ? 'WIN' : 'LOSS'
+    recordTrade(result, pnl)
+  } else {
+    console.log('[TL] P&L nicht verfügbar — Trade ohne Betrag aufgezeichnet')
+    recordTrade('WIN', 0) // Fallback
+  }
+
+  return true
 }
 
 // ================================
@@ -211,9 +237,7 @@ export async function handleSignal(position, symbol) {
 
   } catch (err) {
     console.error('[TL] Fehler:', err.response?.data || err.message)
-
     if (err.response?.status === 401) {
-      console.log('[TL] Token abgelaufen — neu einloggen...')
       accessToken = null
       await init()
       await handleSignal(position, symbol)
@@ -226,30 +250,21 @@ export async function handleSignal(position, symbol) {
 // ================================
 export async function getDebugInfo() {
   if (!accessToken) await init()
-
   return {
     accountId,
     accNum,
     totalInstruments: instrumentMap.size,
-    instruments: [...instrumentMap.entries()].map(([name, data]) => ({
-      name,
-      ...data
-    }))
+    riskState: getState(),
   }
 }
 
 export async function getPositionDebug() {
   if (!accessToken) await init()
-
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
     { headers: authHeaders() }
   )
-
   return res.data
 }
 
-// Beim Start initialisieren
-init().catch(err => {
-  console.error('[TL] Init fehlgeschlagen:', err.message)
-})
+init().catch(err => console.error('[TL] Init fehlgeschlagen:', err.message))
