@@ -19,7 +19,7 @@ app.post('/webhook', async (req, res) => {
 })
 
 // ================================
-// TELEGRAM BOT COMMANDS
+// TELEGRAM COMMANDS
 // ================================
 app.post('/telegram', async (req, res) => {
   const text = req.body?.message?.text || ''
