@@ -35,7 +35,7 @@ app.get('/debug-positions', async (req, res) => {
 
 app.get('/risk', async (req, res) => {
   try {
-    const { getState } = await import('../config/risk.js')
+    const { getState } = await import('./config/risk.js')  // ← FIX
     res.json(getState())
   } catch (err) {
     res.json({ error: err.message })
