@@ -1,3 +1,5 @@
+config/risk.js
+
 // ============================================================
 // RISK ENGINE v3.0
 // Kein SL/TP — Lot-Stufen System + vollständiges Winrate-Modell
@@ -32,7 +34,6 @@ function smoothedWinrate(recentWinrate) {
 
 // ============================================================
 // STAGE 3 — EXTERNAL (letzte 60 Trades)
-// Unter 60 Trades → 50% angenommen
 // ============================================================
 export function getExternalWinrate() {
   if (state.tradeHistory.length < 60) return 50
@@ -41,23 +42,20 @@ export function getExternalWinrate() {
 
 // ============================================================
 // STAGE 2 — COARSE (letzte 10–30 Trades)
-// Beeinflusst Fine Tool Sensitivität
 // ============================================================
 export function getCoarseWinrate() {
   const ext = getExternalWinrate()
-  // Je besser External, desto mehr Trades für Coarse
-  const n = Math.round(10 + (ext / 100) * 20)
+  const n   = Math.round(10 + (ext / 100) * 20)
   if (state.tradeHistory.length < n) return 50
   return calcWinrate(state.tradeHistory, n)
 }
 
 // ============================================================
 // STAGE 1 — FINE (letzte 2–5 Trades dynamisch)
-// Reagiert schnell auf aktuelle Streaks
 // ============================================================
 export function getFineTrades() {
   const ext = getExternalWinrate()
-  const n = 5 - 0.03 * ext
+  const n   = 5 - 0.03 * ext
   return Math.min(5, Math.max(2, Math.round(n)))
 }
 
@@ -69,7 +67,6 @@ export function getFineWinrate() {
 
 // ============================================================
 // ADAPTIVE RISK %
-// 0.5% – 2.0% basierend auf Fine Winrate
 // ============================================================
 function calcAdaptiveRisk(fineWinrate) {
   const risk = 0.5 + 0.015 * fineWinrate
@@ -83,17 +80,15 @@ export function getRiskPercent() {
 }
 
 // ============================================================
-// LOT STUFEN — basierend auf Risk %
-// 0.75% → 0.01 | 1.25% → 0.02 | 1.75% → 0.03 | 2.0% → 0.04
+// LOT STUFEN
 // ============================================================
 export function getLotSize() {
   const risk = getRiskPercent()
-
-  if (risk <= 0.75) return 0.01  // Hard Cap / defensiv
-  if (risk <= 1.0)  return 0.01  // Schlechte Winrate
-  if (risk <= 1.5)  return 0.02  // Normal
-  if (risk <= 1.75) return 0.03  // Gut
-  return 0.04                    // Recovery Boost / sehr gut
+  if (risk <= 0.75) return 0.01
+  if (risk <= 1.0)  return 0.01
+  if (risk <= 1.5)  return 0.02
+  if (risk <= 1.75) return 0.03
+  return 0.04
 }
 
 // ============================================================
@@ -121,22 +116,37 @@ function checkHardCap() {
 }
 
 // ============================================================
-// TRADE LOG — letzte 3 Trades + Winrate ausgeben
+// RECOVERY
+// ============================================================
+function checkRecovery() {
+  const threshold = state.initialCapital * 0.35
+  const target    = state.initialCapital * 0.50
+
+  if (state.tradingBalance <= threshold && state.savingsBalance > 0) {
+    const needed   = target - state.tradingBalance
+    const transfer = Math.min(needed, state.savingsBalance)
+    state.tradingBalance += transfer
+    state.savingsBalance -= transfer
+    console.log(`[RISK] 🔄 RECOVERY — $${transfer.toFixed(2)} von Savings → Trading`)
+  }
+}
+
+// ============================================================
+// TRADE LOG
 // ============================================================
 function printTradeLog() {
-  const history  = state.tradeHistory
-  const total    = history.length
-  const last3    = history.slice(-3)
-  const ext      = getExternalWinrate()
-  const coarse   = getCoarseWinrate()
-  const fine     = getFineWinrate()
+  const history    = state.tradeHistory
+  const total      = history.length
+  const last3      = history.slice(-3)
+  const ext        = getExternalWinrate()
+  const coarse     = getCoarseWinrate()
+  const fine       = getFineWinrate()
   const fineTrades = getFineTrades()
-  const risk     = getRiskPercent()
-  const lots     = getLotSize()
-
-  const pattern  = last3.map(t => t.result === 'WIN' ? 'WIN' : 'LOSE').join(' → ')
-  const wins     = history.filter(t => t.result === 'WIN').length
-  const totalWr  = total > 0 ? ((wins / total) * 100).toFixed(1) : '50.0'
+  const risk       = getRiskPercent()
+  const lots       = getLotSize()
+  const pattern    = last3.map(t => t.result === 'WIN' ? 'WIN' : 'LOSE').join(' → ')
+  const wins       = history.filter(t => t.result === 'WIN').length
+  const totalWr    = total > 0 ? ((wins / total) * 100).toFixed(1) : '50.0'
 
   console.log('\n╔══════════════════════════════════════╗')
   console.log('║         TRADE LOG — NACH FLAT        ║')
@@ -161,14 +171,29 @@ function printTradeLog() {
 
 // ============================================================
 // TRADE AUFZEICHNEN
-// Wird nach Flat-Signal mit P&L aus TradeLocker aufgerufen
 // ============================================================
-export function recordTrade(result, profitAmount = 0) {
+export function recordTrade(result, profitAmount = 0, liveBalance = null) {
   state.tradeHistory.push({
     result,
     profit:    profitAmount,
     timestamp: new Date().toISOString(),
   })
+
+  // Live Balance überschreibt berechnete Balance wenn verfügbar
+  if (liveBalance !== null) {
+    state.tradingBalance = liveBalance
+    console.log(`[RISK] Live Balance übernommen: $${liveBalance.toFixed(2)}`)
+  } else {
+    // Fallback: intern berechnen
+    if (result === 'WIN' && profitAmount > 0) {
+      const umlage = getUmlage(profitAmount)
+      state.savingsBalance += umlage
+      state.tradingBalance += (profitAmount - umlage)
+    } else if (result === 'LOSS' && profitAmount < 0) {
+      state.tradingBalance += profitAmount
+      checkRecovery()
+    }
+  }
 
   // Hard Cap Counter runterzählen
   if (state.hardCapActive && state.hardCapTradesRemaining > 0) {
@@ -185,17 +210,7 @@ export function recordTrade(result, profitAmount = 0) {
   // Recovery Boost verbrauchen
   if (state.recoveryBoostActive) {
     state.recoveryBoostActive = false
-    console.log('[RISK] Recovery Boost verbraucht — zurück zu normaler Berechnung')
-  }
-
-  // Balances updaten
-  if (result === 'WIN' && profitAmount > 0) {
-    const umlage = getUmlage(profitAmount)
-    state.savingsBalance += umlage
-    state.tradingBalance += (profitAmount - umlage)
-  } else if (result === 'LOSS' && profitAmount < 0) {
-    state.tradingBalance += profitAmount
-    checkRecovery()
+    console.log('[RISK] Recovery Boost verbraucht')
   }
 
   // Hard Cap prüfen
@@ -206,23 +221,7 @@ export function recordTrade(result, profitAmount = 0) {
 }
 
 // ============================================================
-// RECOVERY
-// ============================================================
-function checkRecovery() {
-  const threshold = state.initialCapital * 0.35
-  const target    = state.initialCapital * 0.50
-
-  if (state.tradingBalance <= threshold && state.savingsBalance > 0) {
-    const needed   = target - state.tradingBalance
-    const transfer = Math.min(needed, state.savingsBalance)
-    state.tradingBalance += transfer
-    state.savingsBalance -= transfer
-    console.log(`[RISK] 🔄 RECOVERY — $${transfer.toFixed(2)} von Savings → Trading`)
-  }
-}
-
-// ============================================================
-// STATE ABRUFEN (für /risk Endpoint)
+// STATE ABRUFEN
 // ============================================================
 export function getState() {
   const history = state.tradeHistory
@@ -231,7 +230,7 @@ export function getState() {
 
   return {
     tradeCount:             total,
-    totalWinrate:           total > 0 ? parseFloat(((wins/total)*100).toFixed(1)) : 50,
+    totalWinrate:           total > 0 ? parseFloat(((wins / total) * 100).toFixed(1)) : 50,
     last3Trades:            history.slice(-3).map(t => t.result),
     externalWinrate:        parseFloat(getExternalWinrate().toFixed(1)),
     coarseWinrate:          parseFloat(getCoarseWinrate().toFixed(1)),
