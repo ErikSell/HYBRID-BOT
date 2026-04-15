@@ -66,6 +66,41 @@ async function loadAllInstruments() {
 }
 
 // ================================
+// LIVE BALANCE ABRUFEN
+// ================================
+export async function getLiveBalance() {
+  try {
+    const res = await axios.get(
+      `${BASE_URL}/trade/accounts/${accountId}/accountDetails`,
+      { headers: authHeaders() }
+    )
+
+    const fields  = res.data.d?.fields        || []
+    const details = res.data.d?.accountDetails || []
+
+    // Alle Felder loggen damit wir sehen was verfügbar ist
+    console.log('[TL] AccountDetails Felder:', fields)
+    console.log('[TL] AccountDetails Werte:', details)
+
+    const balIdx = fields.indexOf('balance')
+    if (balIdx === -1) {
+      console.log('[TL] Balance Feld nicht gefunden — nutze equity')
+      const eqIdx = fields.indexOf('equity')
+      if (eqIdx !== -1) return parseFloat(details[eqIdx])
+      return null
+    }
+
+    const balance = parseFloat(details[balIdx])
+    console.log(`[TL] Live Balance: $${balance}`)
+    return balance
+
+  } catch (err) {
+    console.error('[TL] Balance Fehler:', err.message)
+    return null
+  }
+}
+
+// ================================
 // INIT
 // ================================
 async function init() {
@@ -136,8 +171,7 @@ async function getOpenPosition(symbol) {
 }
 
 // ================================
-// P&L AUS HISTORY HOLEN
-// Nach Position-Close aus ordersHistory lesen
+// P&L AUS HISTORY HOLEN — FIX
 // ================================
 async function getLastPnL(symbol) {
   try {
@@ -149,33 +183,57 @@ async function getLastPnL(symbol) {
     )
 
     const orders  = res.data.d?.ordersHistory || []
-    const fields  = res.data.d?.fields || []
-    const pnlIdx  = fields.indexOf('realizedPnL') !== -1
-                  ? fields.indexOf('realizedPnL')
-                  : fields.indexOf('pnl')
+    const fields  = res.data.d?.fields        || []
+
+    // Alle verfügbaren Felder loggen
+    console.log('[TL] OrdersHistory Felder:', fields)
+
+    // Mögliche P&L Feldnamen probieren
+    const pnlFieldNames = ['realizedPnL', 'pnl', 'profit', 'netProfit', 'closedPnL']
+    let pnlIdx = -1
+    for (const name of pnlFieldNames) {
+      const idx = fields.indexOf(name)
+      if (idx !== -1) {
+        pnlIdx = idx
+        console.log(`[TL] P&L Feld gefunden: "${name}" (Index ${idx})`)
+        break
+      }
+    }
+
     const instrIdx = fields.indexOf('tradableInstrumentId')
 
-    if (pnlIdx === -1 || orders.length === 0) return null
+    if (pnlIdx === -1) {
+      console.log('[TL] Kein P&L Feld gefunden. Verfügbare Felder:', fields)
+      return null
+    }
+
+    if (orders.length === 0) {
+      console.log('[TL] Keine Orders in History')
+      return null
+    }
 
     // Letzten abgeschlossenen Trade für dieses Symbol finden
     const match = [...orders]
       .reverse()
-      .find(o => String(o[instrIdx]) === String(instrumentId))
+      .find(o => instrIdx !== -1 ? String(o[instrIdx]) === String(instrumentId) : true)
 
-    if (!match) return null
+    if (!match) {
+      console.log(`[TL] Kein Trade für ${symbol} in History gefunden`)
+      return null
+    }
 
     const pnl = parseFloat(match[pnlIdx])
-    console.log(`[TL] P&L aus History: $${pnl.toFixed(2)}`)
+    console.log(`[TL] P&L gefunden: $${pnl.toFixed(4)}`)
     return pnl
 
   } catch (err) {
-    console.error('[TL] P&L Fetch Fehler:', err.message)
+    console.error('[TL] P&L Fetch Fehler:', err.response?.data || err.message)
     return null
   }
 }
 
 // ================================
-// POSITION SCHLIESSEN + TRADE AUFZEICHNEN
+// POSITION SCHLIESSEN + TRADE AUFZEICHNEN — FIX
 // ================================
 async function closePosition(symbol) {
   const position = await getOpenPosition(symbol)
@@ -192,20 +250,24 @@ async function closePosition(symbol) {
     { headers: authHeaders(), data: { qty: 0 } }
   )
 
-  console.log(`[TL] Position geschlossen`)
+  console.log(`[TL] Position geschlossen — warte auf History Update...`)
 
-  // Kurz warten damit TradeLocker History aktualisiert
-  await new Promise(r => setTimeout(r, 1500))
+  // Warten damit TradeLocker History aktualisiert
+  await new Promise(r => setTimeout(r, 2000))
 
   // P&L aus History holen
   const pnl = await getLastPnL(symbol)
 
+  // Live Balance holen
+  const liveBalance = await getLiveBalance()
+
   if (pnl !== null) {
-    const result = pnl >= 0 ? 'WIN' : 'LOSS'
-    recordTrade(result, pnl)
+    // ← FIX: strikt prüfen — nur echte positive Zahlen sind WIN
+    const result = pnl > 0 ? 'WIN' : 'LOSS'
+    console.log(`[TL] Trade Ergebnis: ${result} | P&L: $${pnl.toFixed(4)}`)
+    recordTrade(result, pnl, liveBalance)
   } else {
-    console.log('[TL] P&L nicht verfügbar — Trade ohne Betrag aufgezeichnet')
-    recordTrade('WIN', 0) // Fallback
+    console.log('[TL] P&L konnte nicht ermittelt werden — Trade nicht aufgezeichnet')
   }
 
   return true
@@ -250,9 +312,11 @@ export async function handleSignal(position, symbol) {
 // ================================
 export async function getDebugInfo() {
   if (!accessToken) await init()
+  const liveBalance = await getLiveBalance()
   return {
     accountId,
     accNum,
+    liveBalance,
     totalInstruments: instrumentMap.size,
     riskState: getState(),
   }
