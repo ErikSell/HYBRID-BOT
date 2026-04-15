@@ -360,3 +360,27 @@ init().catch(async err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
   await sendErrorNotification(err.message, 'init()')
 })
+export async function debugBalance() {
+  if (!accessToken) await init()
+
+  const results = {}
+
+  // Alle möglichen Endpoints probieren
+  const endpoints = [
+    `/trade/accounts/${accountId}/accountDetails`,
+    `/trade/accounts/${accountId}`,
+    `/trade/accounts/${accountId}/summary`,
+    `/auth/jwt/all-accounts`,
+  ]
+
+  for (const ep of endpoints) {
+    try {
+      const res = await axios.get(`${BASE_URL}${ep}`, { headers: authHeaders() })
+      results[ep] = res.data
+    } catch (err) {
+      results[ep] = { error: err.message, status: err.response?.status }
+    }
+  }
+
+  return results
+}
