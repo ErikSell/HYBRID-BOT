@@ -1,16 +1,18 @@
 import axios from 'axios'
 import { getLotSize, recordTrade, getState } from '../config/risk.js'
 import {
+  sendOpenNotification,
   sendTradeUpdate,
-  sendOrderNotification,
+  sendDashboard,
   sendErrorNotification,
   sendStartupNotification,
 } from './telegram.js'
 
-const BASE_URL = 'https://demo.tradelocker.com/backend-api'
-const EMAIL    = process.env.TL_EMAIL
-const PASSWORD = process.env.TL_PASSWORD
-const SERVER   = process.env.TL_SERVER
+const BASE_URL        = 'https://demo.tradelocker.com/backend-api'
+const EMAIL           = process.env.TL_EMAIL
+const PASSWORD        = process.env.TL_PASSWORD
+const SERVER          = process.env.TL_SERVER
+const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '4900')
 
 let accessToken = null
 let accountId   = null
@@ -141,7 +143,7 @@ async function placeOrder(side, symbol) {
   )
 
   console.log(`[TL] Order platziert:`, res.data)
-  await sendOrderNotification('open', symbol, lots, side)
+  await sendOpenNotification(symbol, side, lots)
   return res.data
 }
 
@@ -179,13 +181,13 @@ async function getLastPnL(symbol) {
       { headers: authHeaders() }
     )
 
-    const orders  = res.data.d?.ordersHistory || []
-    const fields  = res.data.d?.fields        || []
+    const orders   = res.data.d?.ordersHistory || []
+    const fields   = res.data.d?.fields        || []
     console.log('[TL] OrdersHistory Felder:', fields)
 
-    const pnlFieldNames = ['realizedPnL', 'pnl', 'profit', 'netProfit', 'closedPnL']
+    const pnlNames = ['realizedPnL', 'pnl', 'profit', 'netProfit', 'closedPnL']
     let pnlIdx = -1
-    for (const name of pnlFieldNames) {
+    for (const name of pnlNames) {
       const idx = fields.indexOf(name)
       if (idx !== -1) { pnlIdx = idx; break }
     }
@@ -235,10 +237,8 @@ async function closePosition(symbol) {
     console.log(`[TL] Ergebnis: ${result} | P&L: $${pnl.toFixed(4)}`)
     recordTrade(result, pnl, liveBalance)
 
-    // Telegram Update senden
     const s = getState()
     await sendTradeUpdate({
-      action:         'close',
       symbol,
       side:           position.side,
       lots:           position.qty,
@@ -256,7 +256,10 @@ async function closePosition(symbol) {
     })
   } else {
     console.log('[TL] P&L nicht verfügbar')
-    await sendErrorNotification('P&L konnte nicht ermittelt werden', `closePosition(${symbol})`)
+    await sendErrorNotification(
+      'P&L konnte nicht ermittelt werden',
+      `closePosition(${symbol})`
+    )
   }
 
   return true
@@ -289,13 +292,22 @@ export async function handleSignal(position, symbol) {
   } catch (err) {
     console.error('[TL] Fehler:', err.response?.data || err.message)
     await sendErrorNotification(err.message, `handleSignal(${position}, ${symbol})`)
-
     if (err.response?.status === 401) {
       accessToken = null
       await init()
       await handleSignal(position, symbol)
     }
   }
+}
+
+// ================================
+// DASHBOARD — für /d Command
+// ================================
+export async function triggerDashboard() {
+  if (!accessToken) await init()
+  const liveBalance = await getLiveBalance()
+  const state       = getState()
+  await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
 // ================================
@@ -309,7 +321,7 @@ export async function getDebugInfo() {
     accNum,
     liveBalance,
     totalInstruments: instrumentMap.size,
-    riskState: getState(),
+    riskState:        getState(),
   }
 }
 
@@ -322,6 +334,9 @@ export async function getPositionDebug() {
   return res.data
 }
 
+// ================================
+// START
+// ================================
 init().catch(async err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
   await sendErrorNotification(err.message, 'init()')
