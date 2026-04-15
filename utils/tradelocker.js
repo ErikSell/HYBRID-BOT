@@ -88,14 +88,31 @@ export async function getLiveBalance() {
 
     let balIdx = fields.indexOf('balance')
     if (balIdx === -1) balIdx = fields.indexOf('equity')
-    if (balIdx === -1) return null
-
-    const balance = parseFloat(details[balIdx])
-    console.log(`[TL] Live Balance: $${balance}`)
-    return balance
-  } catch (err) {
-    console.error('[TL] Balance Fehler:', err.message)
+    if (balIdx !== -1) {
+      const balance = parseFloat(details[balIdx])
+      console.log(`[TL] Live Balance: $${balance}`)
+      return balance
+    }
     return null
+  } catch (err) {
+    console.error('[TL] accountDetails Fehler:', err.message)
+
+    // Fallback: direkten Account Endpoint probieren
+    try {
+      const res2 = await axios.get(
+        `${BASE_URL}/trade/accounts/${accountId}`,
+        { headers: authHeaders() }
+      )
+      console.log('[TL] Account raw:', JSON.stringify(res2.data))
+      const bal = res2.data?.d?.balance
+               || res2.data?.d?.equity
+               || null
+      if (bal) return parseFloat(bal)
+      return null
+    } catch (err2) {
+      console.error('[TL] Account Fallback Fehler:', err2.message)
+      return null
+    }
   }
 }
 
@@ -197,7 +214,9 @@ async function getLastPnL(symbol) {
 
     const match = [...orders]
       .reverse()
-      .find(o => instrIdx !== -1 ? String(o[instrIdx]) === String(instrumentId) : true)
+      .find(o => instrIdx !== -1
+        ? String(o[instrIdx]) === String(instrumentId)
+        : true)
 
     if (!match) return null
 
