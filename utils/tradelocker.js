@@ -74,45 +74,26 @@ async function loadAllInstruments() {
 }
 
 // ================================
-// LIVE BALANCE
+// LIVE BALANCE — FIX
 // ================================
 export async function getLiveBalance() {
   try {
-    const res = await axios.get(
-      `${BASE_URL}/trade/accounts/${accountId}/accountDetails`,
-      { headers: authHeaders() }
-    )
-    const fields  = res.data.d?.fields        || []
-    const details = res.data.d?.accountDetails || []
-    console.log('[TL] AccountDetails Felder:', fields)
+    const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
+      headers: { Authorization: `Bearer ${accessToken}` }
+    })
 
-    let balIdx = fields.indexOf('balance')
-    if (balIdx === -1) balIdx = fields.indexOf('equity')
-    if (balIdx !== -1) {
-      const balance = parseFloat(details[balIdx])
-      console.log(`[TL] Live Balance: $${balance}`)
-      return balance
-    }
-    return null
+    const accounts = res.data.accounts || []
+    const account  = accounts.find(a => a.id === String(accountId)) || accounts[0]
+
+    if (!account) return null
+
+    const balance = parseFloat(account.accountBalance)
+    console.log(`[TL] Live Balance: $${balance}`)
+    return balance
+
   } catch (err) {
-    console.error('[TL] accountDetails Fehler:', err.message)
-
-    // Fallback: direkten Account Endpoint probieren
-    try {
-      const res2 = await axios.get(
-        `${BASE_URL}/trade/accounts/${accountId}`,
-        { headers: authHeaders() }
-      )
-      console.log('[TL] Account raw:', JSON.stringify(res2.data))
-      const bal = res2.data?.d?.balance
-               || res2.data?.d?.equity
-               || null
-      if (bal) return parseFloat(bal)
-      return null
-    } catch (err2) {
-      console.error('[TL] Account Fallback Fehler:', err2.message)
-      return null
-    }
+    console.error('[TL] Balance Fehler:', err.message)
+    return null
   }
 }
 
@@ -330,6 +311,32 @@ export async function triggerDashboard() {
 }
 
 // ================================
+// DEBUG BALANCE
+// ================================
+export async function debugBalance() {
+  if (!accessToken) await init()
+
+  const results   = {}
+  const endpoints = [
+    `/trade/accounts/${accountId}/accountDetails`,
+    `/trade/accounts/${accountId}`,
+    `/trade/accounts/${accountId}/summary`,
+    `/auth/jwt/all-accounts`,
+  ]
+
+  for (const ep of endpoints) {
+    try {
+      const res = await axios.get(`${BASE_URL}${ep}`, { headers: authHeaders() })
+      results[ep] = res.data
+    } catch (err) {
+      results[ep] = { error: err.message, status: err.response?.status }
+    }
+  }
+
+  return results
+}
+
+// ================================
 // DEBUG
 // ================================
 export async function getDebugInfo() {
@@ -360,27 +367,3 @@ init().catch(async err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
   await sendErrorNotification(err.message, 'init()')
 })
-export async function debugBalance() {
-  if (!accessToken) await init()
-
-  const results = {}
-
-  // Alle möglichen Endpoints probieren
-  const endpoints = [
-    `/trade/accounts/${accountId}/accountDetails`,
-    `/trade/accounts/${accountId}`,
-    `/trade/accounts/${accountId}/summary`,
-    `/auth/jwt/all-accounts`,
-  ]
-
-  for (const ep of endpoints) {
-    try {
-      const res = await axios.get(`${BASE_URL}${ep}`, { headers: authHeaders() })
-      results[ep] = res.data
-    } catch (err) {
-      results[ep] = { error: err.message, status: err.response?.status }
-    }
-  }
-
-  return results
-}
