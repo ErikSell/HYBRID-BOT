@@ -3,12 +3,23 @@ import axios from 'axios'
 const TOKEN   = process.env.TELEGRAM_TOKEN
 const CHAT_ID = process.env.TELEGRAM_CHAT_ID
 
+function getGermanTime() {
+  return new Date().toLocaleString('de-DE', {
+    timeZone:    'Europe/Berlin',
+    day:         '2-digit',
+    month:       '2-digit',
+    year:        'numeric',
+    hour:        '2-digit',
+    minute:      '2-digit',
+    second:      '2-digit',
+  })
+}
+
 export async function sendMessage(text) {
   if (!TOKEN || !CHAT_ID) {
-    console.log('[TG] Kein Token/ChatID — Nachricht übersprungen')
+    console.log('[TG] Kein Token/ChatID — übersprungen')
     return
   }
-
   try {
     await axios.post(`https://api.telegram.org/bot${TOKEN}/sendMessage`, {
       chat_id:    CHAT_ID,
@@ -21,9 +32,21 @@ export async function sendMessage(text) {
   }
 }
 
+// ================================
+// TRADE GEÖFFNET — kurze Notification
+// ================================
+export async function sendOpenNotification(symbol, side, lots) {
+  const emoji = side === 'buy' ? '🟢' : '🔴'
+  const msg = `${emoji} <b>${side.toUpperCase()} ${symbol}</b> — ${lots} Lots\n⏰ ${getGermanTime()}`
+  await sendMessage(msg)
+}
+
+// ================================
+// TRADE GESCHLOSSEN — volle Übersicht
+// ================================
 export async function sendTradeUpdate(data) {
   const {
-    action, symbol, side, lots,
+    symbol, side, lots,
     pnl, result,
     totalTrades, winrate,
     last3, riskPercent, nextLots,
@@ -31,13 +54,13 @@ export async function sendTradeUpdate(data) {
     tradingBalance, savingsBalance,
   } = data
 
-  const resultEmoji = result === 'WIN' ? '✅' : '❌'
+  const resultEmoji  = result === 'WIN' ? '✅' : '❌'
   const pnlFormatted = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
-  const last3Str = last3.map(r => r === 'WIN' ? '✅' : '❌').join(' ')
+  const last3Str     = last3.map(r => r === 'WIN' ? '✅' : '❌').join(' ')
 
   let statusLine = ''
-  if (hardCap)       statusLine = '⚠️ <b>HARD CAP AKTIV</b>'
-  else if (recoveryBoost) statusLine = '🚀 <b>RECOVERY BOOST AKTIV</b>'
+  if (hardCap)          statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
+  else if (recoveryBoost) statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
 
   const msg = `
 ${resultEmoji} <b>TRADE GESCHLOSSEN</b>
@@ -46,60 +69,78 @@ ${resultEmoji} <b>TRADE GESCHLOSSEN</b>
 📈 <b>Side:</b> ${side?.toUpperCase() || '-'}
 🔢 <b>Lots:</b> ${lots}
 💰 <b>P&L:</b> ${pnlFormatted}
-🏆 <b>Ergebnis:</b> ${result}
+🏆 <b>Ergebnis:</b> ${result}${statusLine}
 
 ━━━━━━━━━━━━━━━━━━━━
-📉 <b>Letzte 3 Trades:</b> ${last3Str}
+${last3Str} <i>Letzte 3 Trades</i>
 🎯 <b>Winrate:</b> ${winrate}%
-⚡ <b>Risk nächster Trade:</b> ${riskPercent}%
+⚡ <b>Nächster Risk:</b> ${riskPercent}%
 📦 <b>Nächste Lots:</b> ${nextLots}
-${statusLine}
 
 ━━━━━━━━━━━━━━━━━━━━
-💼 <b>Trading Balance:</b> $${tradingBalance}
-🏦 <b>Savings Balance:</b> $${savingsBalance}
-📋 <b>Total Trades:</b> ${totalTrades}
+💼 <b>Trading:</b> $${tradingBalance}
+🏦 <b>Savings:</b> $${savingsBalance}
+📋 <b>Trades gesamt:</b> ${totalTrades}
+⏰ ${getGermanTime()}
 `.trim()
 
   await sendMessage(msg)
 }
 
-export async function sendOrderNotification(action, symbol, lots, side) {
-  const emoji = side === 'buy' ? '🟢' : '🔴'
+// ================================
+// DASHBOARD /d
+// ================================
+export async function sendDashboard(liveBalance, initialCapital, state) {
+  const pnl        = liveBalance - initialCapital
+  const pnlPercent = ((pnl / initialCapital) * 100).toFixed(2)
+  const pnlFormatted = pnl >= 0
+    ? `+$${pnl.toFixed(2)} <i>(+${pnlPercent}%)</i>`
+    : `-$${Math.abs(pnl).toFixed(2)} <i>(${pnlPercent}%)</i>`
+
+  const last3Str = state.last3Trades.length > 0
+    ? state.last3Trades.map(r => r === 'WIN' ? '✅' : '❌').join(' ')
+    : '—'
+
+  let statusLine = ''
+  if (state.hardCapActive)        statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
+  else if (state.recoveryBoostActive) statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
+
   const msg = `
-${emoji} <b>ORDER PLATZIERT</b>
+📊 <b>ACCOUNT ÜBERSICHT</b>
 
-📊 <b>Symbol:</b> ${symbol}
-📈 <b>Side:</b> ${side?.toUpperCase()}
-🔢 <b>Lots:</b> ${lots}
-⏰ <b>Zeit:</b> ${new Date().toLocaleTimeString('de-DE')}
+💼 <b>Account Size:</b> $${liveBalance.toFixed(2)}
+📈 <b>P&L:</b> ${pnlFormatted}
+
+━━━━━━━━━━━━━━━━━━━━
+🎯 <b>Winrate:</b> ${state.totalWinrate}%
+📋 <b>Trades gesamt:</b> ${state.tradeCount}
+${last3Str} <i>Letzte 3 Trades</i>
+
+⚡ <b>Aktueller Risk:</b> ${state.currentRiskPercent}%
+📦 <b>Nächste Lots:</b> ${state.nextLotSize}${statusLine}
+
+━━━━━━━━━━━━━━━━━━━━
+💰 <b>Trading Balance:</b> $${state.tradingBalance}
+🏦 <b>Savings Balance:</b> $${state.savingsBalance}
+
+⏰ ${getGermanTime()}
 `.trim()
 
   await sendMessage(msg)
 }
 
-export async function sendErrorNotification(error, context) {
-  const msg = `
-⚠️ <b>BOT FEHLER</b>
-
-📍 <b>Kontext:</b> ${context}
-❌ <b>Fehler:</b> ${error}
-⏰ <b>Zeit:</b> ${new Date().toLocaleTimeString('de-DE')}
-`.trim()
-
-  await sendMessage(msg)
-}
-
+// ================================
+// STARTUP
+// ================================
 export async function sendStartupNotification() {
-  const msg = `
-🤖 <b>BOT GESTARTET</b>
+  const msg = `🤖 <b>BOT GESTARTET</b>\n\n✅ TradeLocker verbunden\n✅ Risk Engine geladen\n✅ Webhook aktiv\n\n⏰ ${getGermanTime()}`
+  await sendMessage(msg)
+}
 
-✅ TradeLocker verbunden
-✅ Risk Engine geladen
-✅ Webhook aktiv
-
-⏰ ${new Date().toLocaleString('de-DE')}
-`.trim()
-
+// ================================
+// FEHLER
+// ================================
+export async function sendErrorNotification(error, context) {
+  const msg = `⚠️ <b>BOT FEHLER</b>\n\n📍 <b>Kontext:</b> ${context}\n❌ <b>Fehler:</b> ${error}\n⏰ ${getGermanTime()}`
   await sendMessage(msg)
 }
