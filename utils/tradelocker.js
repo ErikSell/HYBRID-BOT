@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { getLotSize, recordTrade, getState } from '../config/risk.js'
+import { getLotSize, recordTrade, getState, loadState } from '../config/risk.js'
 import {
   sendOpenNotification,
   sendTradeUpdate,
@@ -12,7 +12,7 @@ const BASE_URL        = 'https://demo.tradelocker.com/backend-api'
 const EMAIL           = process.env.TL_EMAIL
 const PASSWORD        = process.env.TL_PASSWORD
 const SERVER          = process.env.TL_SERVER
-const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '4900')
+const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '5000')
 
 let accessToken = null
 let accountId   = null
@@ -20,9 +20,6 @@ let accNum      = null
 
 const instrumentMap = new Map()
 
-// ================================
-// AUTH
-// ================================
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
@@ -32,9 +29,6 @@ async function login() {
   console.log('[TL] Login erfolgreich')
 }
 
-// ================================
-// ACCOUNT LADEN
-// ================================
 async function loadAccount() {
   const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
     headers: { Authorization: `Bearer ${accessToken}` }
@@ -46,16 +40,10 @@ async function loadAccount() {
   console.log(`[TL] Account: ${accountId} (accNum: ${accNum})`)
 }
 
-// ================================
-// AUTH HEADERS
-// ================================
 function authHeaders() {
   return { Authorization: `Bearer ${accessToken}`, accNum }
 }
 
-// ================================
-// ALLE INSTRUMENTE LADEN
-// ================================
 async function loadAllInstruments() {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/instruments`,
@@ -73,53 +61,38 @@ async function loadAllInstruments() {
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
-// ================================
-// LIVE BALANCE — FIX
-// ================================
 export async function getLiveBalance() {
   try {
     const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
       headers: { Authorization: `Bearer ${accessToken}` }
     })
-
     const accounts = res.data.accounts || []
     const account  = accounts.find(a => a.id === String(accountId)) || accounts[0]
-
     if (!account) return null
-
     const balance = parseFloat(account.accountBalance)
     console.log(`[TL] Live Balance: $${balance}`)
     return balance
-
   } catch (err) {
     console.error('[TL] Balance Fehler:', err.message)
     return null
   }
 }
 
-// ================================
-// INIT
-// ================================
 async function init() {
   await login()
   await loadAccount()
   await loadAllInstruments()
+  await loadState()  // ← State aus Redis laden
   console.log('[TL] Initialisierung abgeschlossen')
   await sendStartupNotification()
 }
 
-// ================================
-// INSTRUMENT HOLEN
-// ================================
 function getInstrument(symbol) {
   const instrument = instrumentMap.get(symbol)
   if (!instrument) throw new Error(`[TL] Symbol ${symbol} nicht gefunden`)
   return instrument
 }
 
-// ================================
-// ORDER PLATZIEREN
-// ================================
 async function placeOrder(side, symbol) {
   const { instrumentId, routeId } = getInstrument(symbol)
   const lots = getLotSize()
@@ -145,9 +118,6 @@ async function placeOrder(side, symbol) {
   return res.data
 }
 
-// ================================
-// OFFENE POSITION HOLEN
-// ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -168,9 +138,6 @@ async function getOpenPosition(symbol) {
   }
 }
 
-// ================================
-// P&L AUS HISTORY
-// ================================
 async function getLastPnL(symbol) {
   try {
     const { instrumentId } = getInstrument(symbol)
@@ -210,9 +177,6 @@ async function getLastPnL(symbol) {
   }
 }
 
-// ================================
-// POSITION SCHLIESSEN
-// ================================
 async function closePosition(symbol) {
   const position = await getOpenPosition(symbol)
   if (!position) {
@@ -235,7 +199,7 @@ async function closePosition(symbol) {
   if (pnl !== null) {
     const result = pnl > 0 ? 'WIN' : 'LOSS'
     console.log(`[TL] Ergebnis: ${result} | P&L: $${pnl.toFixed(4)}`)
-    recordTrade(result, pnl, liveBalance)
+    await recordTrade(result, pnl, liveBalance)
 
     const s = getState()
     await sendTradeUpdate({
@@ -265,9 +229,6 @@ async function closePosition(symbol) {
   return true
 }
 
-// ================================
-// HAUPTFUNKTION
-// ================================
 export async function handleSignal(position, symbol) {
   try {
     if (!accessToken) await init()
@@ -300,9 +261,6 @@ export async function handleSignal(position, symbol) {
   }
 }
 
-// ================================
-// DASHBOARD — für /d Command
-// ================================
 export async function triggerDashboard() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -310,12 +268,8 @@ export async function triggerDashboard() {
   await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
-// ================================
-// DEBUG BALANCE
-// ================================
 export async function debugBalance() {
   if (!accessToken) await init()
-
   const results   = {}
   const endpoints = [
     `/trade/accounts/${accountId}/accountDetails`,
@@ -323,7 +277,6 @@ export async function debugBalance() {
     `/trade/accounts/${accountId}/summary`,
     `/auth/jwt/all-accounts`,
   ]
-
   for (const ep of endpoints) {
     try {
       const res = await axios.get(`${BASE_URL}${ep}`, { headers: authHeaders() })
@@ -332,13 +285,9 @@ export async function debugBalance() {
       results[ep] = { error: err.message, status: err.response?.status }
     }
   }
-
   return results
 }
 
-// ================================
-// DEBUG
-// ================================
 export async function getDebugInfo() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -360,9 +309,6 @@ export async function getPositionDebug() {
   return res.data
 }
 
-// ================================
-// START
-// ================================
 init().catch(async err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
   await sendErrorNotification(err.message, 'init()')
