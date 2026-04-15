@@ -5,13 +5,13 @@ const CHAT_ID = process.env.TELEGRAM_CHAT_ID
 
 function getGermanTime() {
   return new Date().toLocaleString('de-DE', {
-    timeZone:    'Europe/Berlin',
-    day:         '2-digit',
-    month:       '2-digit',
-    year:        'numeric',
-    hour:        '2-digit',
-    minute:      '2-digit',
-    second:      '2-digit',
+    timeZone: 'Europe/Berlin',
+    day:      '2-digit',
+    month:    '2-digit',
+    year:     'numeric',
+    hour:     '2-digit',
+    minute:   '2-digit',
+    second:   '2-digit',
   })
 }
 
@@ -32,18 +32,12 @@ export async function sendMessage(text) {
   }
 }
 
-// ================================
-// TRADE GEÖFFNET — kurze Notification
-// ================================
 export async function sendOpenNotification(symbol, side, lots) {
   const emoji = side === 'buy' ? '🟢' : '🔴'
   const msg = `${emoji} <b>${side.toUpperCase()} ${symbol}</b> — ${lots} Lots\n⏰ ${getGermanTime()}`
   await sendMessage(msg)
 }
 
-// ================================
-// TRADE GESCHLOSSEN — volle Übersicht
-// ================================
 export async function sendTradeUpdate(data) {
   const {
     symbol, side, lots,
@@ -55,12 +49,14 @@ export async function sendTradeUpdate(data) {
   } = data
 
   const resultEmoji  = result === 'WIN' ? '✅' : '❌'
-  const pnlFormatted = pnl >= 0 ? `+$${pnl.toFixed(2)}` : `-$${Math.abs(pnl).toFixed(2)}`
-  const last3Str     = last3.map(r => r === 'WIN' ? '✅' : '❌').join(' ')
+  const pnlFormatted = pnl >= 0
+    ? `+$${pnl.toFixed(2)}`
+    : `-$${Math.abs(pnl).toFixed(2)}`
+  const last3Str = last3.map(r => r === 'WIN' ? '✅' : '❌').join(' ')
 
   let statusLine = ''
-  if (hardCap)          statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
-  else if (recoveryBoost) statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
+  if (hardCap)             statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
+  else if (recoveryBoost)  statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
 
   const msg = `
 ${resultEmoji} <b>TRADE GESCHLOSSEN</b>
@@ -87,12 +83,10 @@ ${last3Str} <i>Letzte 3 Trades</i>
   await sendMessage(msg)
 }
 
-// ================================
-// DASHBOARD /d
-// ================================
 export async function sendDashboard(liveBalance, initialCapital, state) {
-  const pnl        = liveBalance - initialCapital
-  const pnlPercent = ((pnl / initialCapital) * 100).toFixed(2)
+  const balance      = liveBalance ?? state.tradingBalance
+  const pnl          = balance - initialCapital
+  const pnlPercent   = ((pnl / initialCapital) * 100).toFixed(2)
   const pnlFormatted = pnl >= 0
     ? `+$${pnl.toFixed(2)} <i>(+${pnlPercent}%)</i>`
     : `-$${Math.abs(pnl).toFixed(2)} <i>(${pnlPercent}%)</i>`
@@ -102,13 +96,13 @@ export async function sendDashboard(liveBalance, initialCapital, state) {
     : '—'
 
   let statusLine = ''
-  if (state.hardCapActive)        statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
+  if (state.hardCapActive)            statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
   else if (state.recoveryBoostActive) statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
 
   const msg = `
 📊 <b>ACCOUNT ÜBERSICHT</b>
 
-💼 <b>Account Size:</b> $${liveBalance.toFixed(2)}
+💼 <b>Account Size:</b> $${balance.toFixed(2)}
 📈 <b>P&L:</b> ${pnlFormatted}
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -129,17 +123,11 @@ ${last3Str} <i>Letzte 3 Trades</i>
   await sendMessage(msg)
 }
 
-// ================================
-// STARTUP
-// ================================
 export async function sendStartupNotification() {
   const msg = `🤖 <b>BOT GESTARTET</b>\n\n✅ TradeLocker verbunden\n✅ Risk Engine geladen\n✅ Webhook aktiv\n\n⏰ ${getGermanTime()}`
   await sendMessage(msg)
 }
 
-// ================================
-// FEHLER
-// ================================
 export async function sendErrorNotification(error, context) {
   const msg = `⚠️ <b>BOT FEHLER</b>\n\n📍 <b>Kontext:</b> ${context}\n❌ <b>Fehler:</b> ${error}\n⏰ ${getGermanTime()}`
   await sendMessage(msg)
