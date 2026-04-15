@@ -1,5 +1,3 @@
-config/risk.js
-
 // ============================================================
 // RISK ENGINE v3.0
 // Kein SL/TP — Lot-Stufen System + vollständiges Winrate-Modell
