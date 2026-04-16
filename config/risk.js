@@ -12,7 +12,7 @@ const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '5000')
 const REDIS_KEY       = 'hybrid-bot:state'
 
 // ============================================================
-// STATE — wird aus Redis geladen
+// STATE
 // ============================================================
 let state = {
   tradeHistory:           [],
@@ -30,23 +30,36 @@ let state = {
 export async function loadState() {
   try {
     const saved = await redis.get(REDIS_KEY)
-    if (saved) {
-      state = { ...state, ...saved }
+    console.log('[RISK] Redis raw:', JSON.stringify(saved))
+
+    if (saved && typeof saved === 'object' && Array.isArray(saved.tradeHistory)) {
+      // Sauber mergen — jeden Wert einzeln übernehmen
+      state.tradeHistory           = saved.tradeHistory           ?? []
+      state.tradingBalance         = saved.tradingBalance         ?? INITIAL_CAPITAL
+      state.savingsBalance         = saved.savingsBalance         ?? 0
+      state.hardCapActive          = saved.hardCapActive          ?? false
+      state.hardCapTradesRemaining = saved.hardCapTradesRemaining ?? 0
+      state.recoveryBoostActive    = saved.recoveryBoostActive    ?? false
+      state.initialCapital         = INITIAL_CAPITAL
+
       console.log(`[RISK] State geladen — ${state.tradeHistory.length} Trades in History`)
+      console.log(`[RISK] Trading Balance: $${state.tradingBalance}`)
     } else {
-      // Erste Ausführung — Startzustand mit deinen bisherigen Trades vorbelegen
+      console.log('[RISK] Kein gültiger State in Redis — Startzustand anlegen')
+
+      // Bisherige Trades vorbelegen
       state.tradeHistory = [
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-01T00:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-02T00:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-03T00:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-04T00:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-05T00:00:00.000Z' },
-        { result: 'WIN',  profit: 10,  timestamp: '2026-04-06T00:00:00.000Z' },
-        { result: 'WIN',  profit: 10,  timestamp: '2026-04-07T00:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T00:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T01:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T02:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T03:00:00.000Z' },
+        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T04:00:00.000Z' },
+        { result: 'WIN',  profit: 10,  timestamp: '2026-04-10T05:00:00.000Z' },
+        { result: 'WIN',  profit: 10,  timestamp: '2026-04-10T06:00:00.000Z' },
       ]
-      state.tradingBalance = 4984.21  // deine echte aktuelle Balance
+      state.tradingBalance = 4966.14
       await saveState()
-      console.log('[RISK] Startzustand mit bisherigen Trades angelegt')
+      console.log('[RISK] Startzustand gespeichert')
     }
   } catch (err) {
     console.error('[RISK] State laden Fehler:', err.message)
@@ -54,12 +67,20 @@ export async function loadState() {
 }
 
 // ============================================================
-// STATE SPEICHERN IN REDIS
+// STATE SPEICHERN
 // ============================================================
 async function saveState() {
   try {
-    await redis.set(REDIS_KEY, state)
-    console.log('[RISK] State gespeichert')
+    const toSave = {
+      tradeHistory:           state.tradeHistory,
+      tradingBalance:         state.tradingBalance,
+      savingsBalance:         state.savingsBalance,
+      hardCapActive:          state.hardCapActive,
+      hardCapTradesRemaining: state.hardCapTradesRemaining,
+      recoveryBoostActive:    state.recoveryBoostActive,
+    }
+    await redis.set(REDIS_KEY, JSON.stringify(toSave))
+    console.log(`[RISK] State gespeichert — ${state.tradeHistory.length} Trades`)
   } catch (err) {
     console.error('[RISK] State speichern Fehler:', err.message)
   }
@@ -227,7 +248,6 @@ export async function recordTrade(result, profitAmount = 0, liveBalance = null) 
     timestamp: new Date().toISOString(),
   })
 
-  // Live Balance übernehmen
   if (liveBalance !== null) {
     state.tradingBalance = liveBalance
   } else {
@@ -241,7 +261,6 @@ export async function recordTrade(result, profitAmount = 0, liveBalance = null) 
     }
   }
 
-  // Hard Cap Counter
   if (state.hardCapActive && state.hardCapTradesRemaining > 0) {
     state.hardCapTradesRemaining--
     if (state.hardCapTradesRemaining === 0) {
@@ -260,8 +279,6 @@ export async function recordTrade(result, profitAmount = 0, liveBalance = null) 
 
   checkHardCap()
   printTradeLog()
-
-  // In Redis speichern
   await saveState()
 }
 
