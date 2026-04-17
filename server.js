@@ -1,12 +1,9 @@
 import express from 'express'
-import { handleSignal, hasOpenPosition } from './utils/tradelocker.js'
+import { handleSignal, getOpenPositionData } from './utils/tradelocker.js'
 
 const app = express()
 app.use(express.json())
 
-// ================================
-// TRADINGVIEW WEBHOOK
-// ================================
 app.post('/webhook', async (req, res) => {
   console.log('[WEBHOOK] Empfangen:', req.body)
   let { position, symbol } = req.body
@@ -14,33 +11,32 @@ app.post('/webhook', async (req, res) => {
   if (!position) return res.status(400).json({ error: 'Kein position-Feld' })
   if (!symbol)   return res.status(400).json({ error: 'Kein symbol-Feld' })
 
-  let skipClose = false
+  let skipClose    = false
+  let cachedPos    = null
 
   if (position === 'buy' || position === 'sell') {
-    const isOpen = await hasOpenPosition(symbol)
+    // Einmal abfragen und cachen
+    cachedPos = await getOpenPositionData(symbol)
+    const isOpen = cachedPos !== null
+
     if (isOpen) {
       position  = 'flat'
       skipClose = false
     } else {
       position  = position === 'buy' ? 'long' : 'short'
-      skipClose = true  // Keine Position offen → kein Close nötig
+      skipClose = true
     }
   }
 
-  console.log(`[WEBHOOK] Mapped position: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
+  console.log(`[WEBHOOK] Mapped: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
 
-  // Sofort antworten
   res.json({ ok: true })
 
-  // Rest async im Hintergrund
-  handleSignal(position, symbol, skipClose).catch(err => {
+  handleSignal(position, symbol, skipClose, cachedPos).catch(err => {
     console.error('[WEBHOOK] Async Fehler:', err.message)
   })
 })
 
-// ================================
-// TELEGRAM COMMANDS
-// ================================
 app.post('/telegram', async (req, res) => {
   const text = req.body?.message?.text || ''
   console.log('[TELEGRAM] Command:', text)
@@ -51,9 +47,6 @@ app.post('/telegram', async (req, res) => {
   res.json({ ok: true })
 })
 
-// ================================
-// DEBUG ROUTES
-// ================================
 app.get('/debug', async (req, res) => {
   try {
     const { getDebugInfo } = await import('./utils/tradelocker.js')
