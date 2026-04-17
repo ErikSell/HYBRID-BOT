@@ -166,7 +166,7 @@ async function getOpenPosition(symbol) {
 }
 
 // ================================
-// HAT OFFENE POSITION — für Webhook Logik
+// HAT OFFENE POSITION
 // ================================
 export async function hasOpenPosition(symbol) {
   try {
@@ -281,18 +281,18 @@ async function closePosition(symbol) {
 // ================================
 // HAUPTFUNKTION
 // ================================
-export async function handleSignal(position, symbol) {
+export async function handleSignal(position, symbol, skipClose = false) {
   try {
     if (!accessToken) await init()
 
-    console.log(`[TL] Signal: ${position} | Symbol: ${symbol}`)
+    console.log(`[TL] Signal: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
 
     if (position === 'long') {
-      await closePosition(symbol)
+      if (!skipClose) await closePosition(symbol)
       await placeOrder('buy', symbol)
     }
     else if (position === 'short') {
-      await closePosition(symbol)
+      if (!skipClose) await closePosition(symbol)
       await placeOrder('sell', symbol)
     }
     else if (position === 'flat') {
@@ -308,7 +308,7 @@ export async function handleSignal(position, symbol) {
     if (err.response?.status === 401) {
       accessToken = null
       await init()
-      await handleSignal(position, symbol)
+      await handleSignal(position, symbol, skipClose)
     }
   }
 }
