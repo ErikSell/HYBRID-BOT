@@ -14,23 +14,26 @@ app.post('/webhook', async (req, res) => {
   if (!position) return res.status(400).json({ error: 'Kein position-Feld' })
   if (!symbol)   return res.status(400).json({ error: 'Kein symbol-Feld' })
 
-  // buy/sell → long/short/flat mappen
+  let skipClose = false
+
   if (position === 'buy' || position === 'sell') {
     const isOpen = await hasOpenPosition(symbol)
     if (isOpen) {
-      position = 'flat'
+      position  = 'flat'
+      skipClose = false
     } else {
-      position = position === 'buy' ? 'long' : 'short'
+      position  = position === 'buy' ? 'long' : 'short'
+      skipClose = true  // Keine Position offen → kein Close nötig
     }
   }
 
-  console.log(`[WEBHOOK] Mapped position: ${position} | Symbol: ${symbol}`)
+  console.log(`[WEBHOOK] Mapped position: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
 
-  // Sofort antworten — TradingView nicht warten lassen
+  // Sofort antworten
   res.json({ ok: true })
 
   // Rest async im Hintergrund
-  handleSignal(position, symbol).catch(err => {
+  handleSignal(position, symbol, skipClose).catch(err => {
     console.error('[WEBHOOK] Async Fehler:', err.message)
   })
 })
