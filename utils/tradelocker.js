@@ -20,6 +20,9 @@ let accNum      = null
 
 const instrumentMap = new Map()
 
+// ================================
+// AUTH
+// ================================
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
@@ -29,6 +32,9 @@ async function login() {
   console.log('[TL] Login erfolgreich')
 }
 
+// ================================
+// ACCOUNT LADEN
+// ================================
 async function loadAccount() {
   const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
     headers: { Authorization: `Bearer ${accessToken}` }
@@ -40,10 +46,16 @@ async function loadAccount() {
   console.log(`[TL] Account: ${accountId} (accNum: ${accNum})`)
 }
 
+// ================================
+// AUTH HEADERS
+// ================================
 function authHeaders() {
   return { Authorization: `Bearer ${accessToken}`, accNum }
 }
 
+// ================================
+// ALLE INSTRUMENTE LADEN
+// ================================
 async function loadAllInstruments() {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/instruments`,
@@ -61,6 +73,9 @@ async function loadAllInstruments() {
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
+// ================================
+// LIVE BALANCE
+// ================================
 export async function getLiveBalance() {
   try {
     const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
@@ -78,21 +93,30 @@ export async function getLiveBalance() {
   }
 }
 
+// ================================
+// INIT
+// ================================
 async function init() {
   await login()
   await loadAccount()
   await loadAllInstruments()
-  await loadState()  // ← State aus Redis laden
+  await loadState()
   console.log('[TL] Initialisierung abgeschlossen')
   await sendStartupNotification()
 }
 
+// ================================
+// INSTRUMENT HOLEN
+// ================================
 function getInstrument(symbol) {
   const instrument = instrumentMap.get(symbol)
   if (!instrument) throw new Error(`[TL] Symbol ${symbol} nicht gefunden`)
   return instrument
 }
 
+// ================================
+// ORDER PLATZIEREN
+// ================================
 async function placeOrder(side, symbol) {
   const { instrumentId, routeId } = getInstrument(symbol)
   const lots = getLotSize()
@@ -118,6 +142,9 @@ async function placeOrder(side, symbol) {
   return res.data
 }
 
+// ================================
+// OFFENE POSITION HOLEN
+// ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -138,6 +165,25 @@ async function getOpenPosition(symbol) {
   }
 }
 
+// ================================
+// HAT OFFENE POSITION — für Webhook Logik
+// ================================
+export async function hasOpenPosition(symbol) {
+  try {
+    if (!accessToken) await init()
+    const position = await getOpenPosition(symbol)
+    const result   = position !== null
+    console.log(`[TL] hasOpenPosition(${symbol}): ${result}`)
+    return result
+  } catch (err) {
+    console.error('[TL] hasOpenPosition Fehler:', err.message)
+    return false
+  }
+}
+
+// ================================
+// P&L AUS HISTORY
+// ================================
 async function getLastPnL(symbol) {
   try {
     const { instrumentId } = getInstrument(symbol)
@@ -177,6 +223,9 @@ async function getLastPnL(symbol) {
   }
 }
 
+// ================================
+// POSITION SCHLIESSEN
+// ================================
 async function closePosition(symbol) {
   const position = await getOpenPosition(symbol)
   if (!position) {
@@ -229,6 +278,9 @@ async function closePosition(symbol) {
   return true
 }
 
+// ================================
+// HAUPTFUNKTION
+// ================================
 export async function handleSignal(position, symbol) {
   try {
     if (!accessToken) await init()
@@ -261,6 +313,9 @@ export async function handleSignal(position, symbol) {
   }
 }
 
+// ================================
+// DASHBOARD
+// ================================
 export async function triggerDashboard() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -268,6 +323,9 @@ export async function triggerDashboard() {
   await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
+// ================================
+// DEBUG BALANCE
+// ================================
 export async function debugBalance() {
   if (!accessToken) await init()
   const results   = {}
@@ -288,6 +346,21 @@ export async function debugBalance() {
   return results
 }
 
+// ================================
+// DEBUG HISTORY
+// ================================
+export async function debugHistory() {
+  if (!accessToken) await init()
+  const res = await axios.get(
+    `${BASE_URL}/trade/accounts/${accountId}/ordersHistory`,
+    { headers: authHeaders() }
+  )
+  return res.data
+}
+
+// ================================
+// DEBUG INFO
+// ================================
 export async function getDebugInfo() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -309,6 +382,9 @@ export async function getPositionDebug() {
   return res.data
 }
 
+// ================================
+// START
+// ================================
 init().catch(async err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
   await sendErrorNotification(err.message, 'init()')
