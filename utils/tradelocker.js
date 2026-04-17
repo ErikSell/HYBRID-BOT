@@ -14,11 +14,25 @@ const PASSWORD        = process.env.TL_PASSWORD
 const SERVER          = process.env.TL_SERVER
 const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '5000')
 
+// Contract sizes pro Lot pro Symbol
+const CONTRACT_SIZES = {
+  US100:   1,
+  NAS100:  1,
+  XAUUSD:  100,
+  XAGUSD:  5000,
+  EURUSD:  100000,
+  GBPUSD:  100000,
+  DEFAULT: 1,
+}
+
 let accessToken = null
 let accountId   = null
 let accNum      = null
 
 const instrumentMap = new Map()
+
+// Speichert Balance vor Trade für P&L Berechnung
+let balanceBeforeTrade = null
 
 async function login() {
   console.log('[TL] Logging in...')
@@ -117,9 +131,6 @@ async function placeOrder(side, symbol) {
   return res.data
 }
 
-// ================================
-// POSITION HOLEN — intern + export
-// ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -140,12 +151,11 @@ async function getOpenPosition(symbol) {
   }
 }
 
-// Export für server.js — einmalige Abfrage die gecacht wird
 export async function getOpenPositionData(symbol) {
   try {
     if (!accessToken) await init()
     const pos = await getOpenPosition(symbol)
-    console.log(`[TL] getOpenPositionData(${symbol}):`, pos ? `gefunden (${pos.id})` : 'keine')
+    console.log(`[TL] getOpenPositionData(${symbol}):`, pos ? `gefunden` : 'keine')
     return pos
   } catch (err) {
     console.error('[TL] getOpenPositionData Fehler:', err.message)
@@ -153,50 +163,28 @@ export async function getOpenPositionData(symbol) {
   }
 }
 
-async function getLastPnL(symbol) {
+// ================================
+// P&L BERECHNUNG — aus Balance Differenz
+// Einfachste und zuverlässigste Methode
+// ================================
+async function calculatePnL(balanceBefore) {
   try {
-    const { instrumentId } = getInstrument(symbol)
-    const res = await axios.get(
-      `${BASE_URL}/trade/accounts/${accountId}/ordersHistory`,
-      { headers: authHeaders() }
-    )
-
-    const orders   = res.data.d?.ordersHistory || []
-    const fields   = res.data.d?.fields        || []
-    console.log('[TL] OrdersHistory Felder:', fields)
-
-    const pnlNames = ['realizedPnL', 'pnl', 'profit', 'netProfit', 'closedPnL']
-    let pnlIdx = -1
-    for (const name of pnlNames) {
-      const idx = fields.indexOf(name)
-      if (idx !== -1) { pnlIdx = idx; break }
-    }
-
-    const instrIdx = fields.indexOf('tradableInstrumentId')
-    if (pnlIdx === -1 || orders.length === 0) return null
-
-    const match = [...orders]
-      .reverse()
-      .find(o => instrIdx !== -1
-        ? String(o[instrIdx]) === String(instrumentId)
-        : true)
-
-    if (!match) return null
-
-    const pnl = parseFloat(match[pnlIdx])
-    console.log(`[TL] P&L: $${pnl.toFixed(4)}`)
-    return pnl
+    await new Promise(r => setTimeout(r, 1500))
+    const balanceAfter = await getLiveBalance()
+    if (balanceBefore === null || balanceAfter === null) return null
+    const pnl = parseFloat((balanceAfter - balanceBefore).toFixed(4))
+    console.log(`[TL] P&L berechnet: $${balanceBefore} → $${balanceAfter} = $${pnl}`)
+    return { pnl, balanceAfter }
   } catch (err) {
-    console.error('[TL] P&L Fehler:', err.message)
+    console.error('[TL] P&L Berechnung Fehler:', err.message)
     return null
   }
 }
 
 // ================================
-// POSITION SCHLIESSEN — cachedPos optional
+// POSITION SCHLIESSEN
 // ================================
 async function closePosition(symbol, cachedPos = null) {
-  // Gecachte Position nutzen wenn vorhanden — spart API Call
   const position = cachedPos ?? await getOpenPosition(symbol)
 
   if (!position) {
@@ -204,6 +192,9 @@ async function closePosition(symbol, cachedPos = null) {
     return false
   }
 
+  // Balance VOR dem Close speichern
+  const balanceBefore = await getLiveBalance()
+  console.log(`[TL] Balance vor Close: $${balanceBefore}`)
   console.log(`[TL] Schließe Position ${position.id} für ${symbol}`)
 
   await axios.delete(
@@ -211,15 +202,14 @@ async function closePosition(symbol, cachedPos = null) {
     { headers: authHeaders(), data: { qty: 0 } }
   )
 
-  await new Promise(r => setTimeout(r, 2000))
+  // P&L aus Balance-Differenz berechnen
+  const pnlData = await calculatePnL(balanceBefore)
 
-  const pnl         = await getLastPnL(symbol)
-  const liveBalance = await getLiveBalance()
-
-  if (pnl !== null) {
-    const result = pnl > 0 ? 'WIN' : 'LOSS'
-    console.log(`[TL] Ergebnis: ${result} | P&L: $${pnl.toFixed(4)}`)
-    await recordTrade(result, pnl, liveBalance)
+  if (pnlData !== null) {
+    const { pnl, balanceAfter } = pnlData
+    const result = pnl >= 0 ? 'WIN' : 'LOSS'
+    console.log(`[TL] Ergebnis: ${result} | P&L: $${pnl}`)
+    await recordTrade(result, pnl, balanceAfter)
 
     const s = getState()
     await sendTradeUpdate({
@@ -237,11 +227,13 @@ async function closePosition(symbol, cachedPos = null) {
       recoveryBoost:  s.recoveryBoostActive,
       tradingBalance: s.tradingBalance,
       savingsBalance: s.savingsBalance,
+      liveBalance:    balanceAfter,
+      initialCapital: INITIAL_CAPITAL,
     })
   } else {
-    console.log('[TL] P&L nicht verfügbar')
+    console.log('[TL] P&L konnte nicht berechnet werden')
     await sendErrorNotification(
-      'P&L konnte nicht ermittelt werden',
+      'P&L Berechnung fehlgeschlagen',
       `closePosition(${symbol})`
     )
   }
@@ -249,9 +241,6 @@ async function closePosition(symbol, cachedPos = null) {
   return true
 }
 
-// ================================
-// HAUPTFUNKTION — cachedPos weitergegeben
-// ================================
 export async function handleSignal(position, symbol, skipClose = false, cachedPos = null) {
   try {
     if (!accessToken) await init()
@@ -267,7 +256,7 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
       await placeOrder('sell', symbol)
     }
     else if (position === 'flat') {
-      await closePosition(symbol, cachedPos)  // cachedPos direkt nutzen
+      await closePosition(symbol, cachedPos)
     }
     else {
       console.log(`[TL] Unbekanntes Signal: ${position}`)
@@ -297,7 +286,6 @@ export async function debugBalance() {
   const endpoints = [
     `/trade/accounts/${accountId}/accountDetails`,
     `/trade/accounts/${accountId}`,
-    `/trade/accounts/${accountId}/summary`,
     `/auth/jwt/all-accounts`,
   ]
   for (const ep of endpoints) {
