@@ -45,7 +45,9 @@ export async function sendTradeUpdate(data) {
     totalTrades, winrate,
     last3, riskPercent, nextLots,
     hardCap, recoveryBoost,
-    tradingBalance, savingsBalance,
+    savingsBalance,
+    liveBalance,
+    initialCapital,
   } = data
 
   const resultEmoji  = result === 'WIN' ? '✅' : '❌'
@@ -54,9 +56,16 @@ export async function sendTradeUpdate(data) {
     : `-$${Math.abs(pnl).toFixed(2)}`
   const last3Str = last3.map(r => r === 'WIN' ? '✅' : '❌').join(' ')
 
+  const accSize      = liveBalance ?? 0
+  const totalPnl     = accSize - initialCapital
+  const pnlPct       = ((totalPnl / initialCapital) * 100).toFixed(2)
+  const totalPnlStr  = totalPnl >= 0
+    ? `+$${totalPnl.toFixed(2)} (+${pnlPct}%)`
+    : `-$${Math.abs(totalPnl).toFixed(2)} (${pnlPct}%)`
+
   let statusLine = ''
-  if (hardCap)             statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
-  else if (recoveryBoost)  statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
+  if (hardCap)            statusLine = '\n⚠️ <b>HARD CAP AKTIV</b>'
+  else if (recoveryBoost) statusLine = '\n🚀 <b>RECOVERY BOOST AKTIV</b>'
 
   const msg = `
 ${resultEmoji} <b>TRADE GESCHLOSSEN</b>
@@ -64,7 +73,8 @@ ${resultEmoji} <b>TRADE GESCHLOSSEN</b>
 📊 <b>Symbol:</b> ${symbol}
 📈 <b>Side:</b> ${side?.toUpperCase() || '-'}
 🔢 <b>Lots:</b> ${lots}
-💰 <b>P&L:</b> ${pnlFormatted}
+💰 <b>Trade P&L:</b> ${pnlFormatted}
+📉 <b>Gesamt P&L:</b> ${totalPnlStr}
 🏆 <b>Ergebnis:</b> ${result}${statusLine}
 
 ━━━━━━━━━━━━━━━━━━━━
@@ -74,8 +84,8 @@ ${last3Str} <i>Letzte 3 Trades</i>
 📦 <b>Nächste Lots:</b> ${nextLots}
 
 ━━━━━━━━━━━━━━━━━━━━
-💼 <b>Trading:</b> $${tradingBalance}
-🏦 <b>Savings:</b> $${savingsBalance}
+💼 <b>Account Size:</b> $${accSize.toFixed(2)}
+🏦 <b>Savings Balance:</b> $${savingsBalance}
 📋 <b>Trades gesamt:</b> ${totalTrades}
 ⏰ ${getGermanTime()}
 `.trim()
@@ -114,7 +124,7 @@ ${last3Str} <i>Letzte 3 Trades</i>
 📦 <b>Nächste Lots:</b> ${state.nextLotSize}${statusLine}
 
 ━━━━━━━━━━━━━━━━━━━━
-💰 <b>Trading Balance:</b> $${state.tradingBalance}
+💼 <b>Account Size:</b> $${balance.toFixed(2)}
 🏦 <b>Savings Balance:</b> $${state.savingsBalance}
 
 ⏰ ${getGermanTime()}
