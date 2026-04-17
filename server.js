@@ -11,12 +11,11 @@ app.post('/webhook', async (req, res) => {
   if (!position) return res.status(400).json({ error: 'Kein position-Feld' })
   if (!symbol)   return res.status(400).json({ error: 'Kein symbol-Feld' })
 
-  let skipClose    = false
-  let cachedPos    = null
+  let skipClose = false
+  let cachedPos = null
 
   if (position === 'buy' || position === 'sell') {
-    // Einmal abfragen und cachen
-    cachedPos = await getOpenPositionData(symbol)
+    cachedPos    = await getOpenPositionData(symbol)
     const isOpen = cachedPos !== null
 
     if (isOpen) {
@@ -29,7 +28,6 @@ app.post('/webhook', async (req, res) => {
   }
 
   console.log(`[WEBHOOK] Mapped: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
-
   res.json({ ok: true })
 
   handleSignal(position, symbol, skipClose, cachedPos).catch(err => {
