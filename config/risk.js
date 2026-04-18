@@ -48,15 +48,7 @@ export async function loadState() {
       console.log('[RISK] Kein gültiger State in Redis — Startzustand anlegen')
 
       // Bisherige Trades vorbelegen
-      state.tradeHistory = [
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T00:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T01:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T02:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T03:00:00.000Z' },
-        { result: 'LOSS', profit: -10, timestamp: '2026-04-10T04:00:00.000Z' },
-        { result: 'WIN',  profit: 10,  timestamp: '2026-04-10T05:00:00.000Z' },
-        { result: 'WIN',  profit: 10,  timestamp: '2026-04-10T06:00:00.000Z' },
-      ]
+      state.tradeHistory = []
       state.tradingBalance = 4966.14
       await saveState()
       console.log('[RISK] Startzustand gespeichert')
