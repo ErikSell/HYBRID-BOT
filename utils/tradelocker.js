@@ -1,5 +1,5 @@
 import axios from 'axios'
-import { getLotSize, recordTrade, getState, loadState } from '../config/risk.js'
+import { getState, recordTrade, loadState } from '../config/risk.js'
 import {
   sendOpenWithButton,
   sendTradeClose,
@@ -116,11 +116,10 @@ function getInstrument(symbol) {
 }
 
 // ================================
-// ORDER PLATZIEREN
+// ORDER PLATZIEREN — lots kommt direkt aus Webhook
 // ================================
-async function placeOrder(side, symbol) {
+async function placeOrder(side, symbol, lots) {
   const { instrumentId, routeId } = getInstrument(symbol)
-  const lots = getLotSize()
   console.log(`[TL] Order: ${side} ${symbol} | Lots: ${lots}`)
 
   const res = await axios.post(
@@ -349,25 +348,21 @@ async function closePosition(symbol, cachedPos = null) {
 }
 
 // ================================
-// HAUPTFUNKTION
-// FIX 1: cachedPos vom Webhook nutzen — kein extra API Call
-// FIX 2: Nach Re-Login immer skipClose=false + cachedPos=null
-// FIX 3: 429 Rate Limit Handler mit 3s Retry
+// HAUPTFUNKTION — lots als Parameter
 // ================================
-export async function handleSignal(position, symbol, skipClose = false, cachedPos = null) {
+export async function handleSignal(position, symbol, skipClose = false, cachedPos = null, lots = 0.01) {
   try {
     if (!accessToken) await init()
 
-    console.log(`[TL] Signal: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
+    console.log(`[TL] Signal: ${position} | Symbol: ${symbol} | Lots: ${lots} | skipClose: ${skipClose}`)
 
     if (position === 'long') {
-      // Cache nutzen wenn vorhanden, sonst nur abfragen wenn nötig
       const existing = cachedPos ?? (skipClose ? null : await getOpenPosition(symbol))
       if (existing) {
         console.log(`[TL] Bestehende Position gefunden — schließe zuerst`)
         await closePosition(symbol, existing)
       }
-      await placeOrder('buy', symbol)
+      await placeOrder('buy', symbol, lots)
     }
     else if (position === 'short') {
       const existing = cachedPos ?? (skipClose ? null : await getOpenPosition(symbol))
@@ -375,7 +370,7 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
         console.log(`[TL] Bestehende Position gefunden — schließe zuerst`)
         await closePosition(symbol, existing)
       }
-      await placeOrder('sell', symbol)
+      await placeOrder('sell', symbol, lots)
     }
     else if (position === 'flat') {
       await closePosition(symbol, cachedPos)
@@ -388,20 +383,18 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
     console.error('[TL] Fehler:', err.response?.data || err.message)
     await sendErrorNotification(err.message, `handleSignal(${position}, ${symbol})`)
 
-    // 401 — Token abgelaufen → Re-Login + Retry mit frischem State
     if (err.response?.status === 401) {
       console.log('[TL] Token abgelaufen — neu einloggen...')
       accessToken = null
       await init()
-      await handleSignal(position, symbol, false, null)
+      await handleSignal(position, symbol, false, null, lots)
       return
     }
 
-    // 429 — Rate Limit → 3 Sekunden warten + Retry
     if (err.response?.status === 429) {
       console.log('[TL] Rate limit — warte 3 Sekunden...')
       await new Promise(r => setTimeout(r, 3000))
-      await handleSignal(position, symbol, skipClose, cachedPos)
+      await handleSignal(position, symbol, skipClose, cachedPos, lots)
       return
     }
   }
