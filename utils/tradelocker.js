@@ -30,9 +30,12 @@ let accessToken = null
 let accountId   = null
 let accNum      = null
 
-const instrumentMap  = new Map()
-const activeTrades   = new Map()
+const instrumentMap = new Map()
+const activeTrades  = new Map()
 
+// ================================
+// AUTH
+// ================================
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
@@ -74,6 +77,9 @@ async function loadAllInstruments() {
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
+// ================================
+// LIVE BALANCE
+// ================================
 export async function getLiveBalance() {
   try {
     const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
@@ -91,6 +97,9 @@ export async function getLiveBalance() {
   }
 }
 
+// ================================
+// INIT
+// ================================
 async function init() {
   await login()
   await loadAccount()
@@ -106,6 +115,9 @@ function getInstrument(symbol) {
   return instrument
 }
 
+// ================================
+// ORDER PLATZIEREN
+// ================================
 async function placeOrder(side, symbol) {
   const { instrumentId, routeId } = getInstrument(symbol)
   const lots = getLotSize()
@@ -127,7 +139,6 @@ async function placeOrder(side, symbol) {
 
   console.log(`[TL] Order platziert:`, res.data)
 
-  // Balance und Entry-Preis kurz nach Order holen
   await new Promise(r => setTimeout(r, 1000))
   const openPos       = await getOpenPosition(symbol)
   const entryPrice    = openPos?.price ? parseFloat(openPos.price) : null
@@ -147,6 +158,9 @@ async function placeOrder(side, symbol) {
   return res.data
 }
 
+// ================================
+// OFFENE POSITION HOLEN
+// ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -180,7 +194,7 @@ export async function getOpenPositionData(symbol) {
 }
 
 // ================================
-// LIVE PNL SNAPSHOT — Fallback via Balance-Differenz
+// LIVE PNL SNAPSHOT
 // ================================
 export async function getLivePositionPnL(symbol) {
   try {
@@ -198,7 +212,6 @@ export async function getLivePositionPnL(symbol) {
       ? Math.round((Date.now() - tradeInfo.openTime) / 60000)
       : null
 
-    // Versuche Preis über depth Endpoint
     let currentPrice = entryPrice
     let gotPrice     = false
 
@@ -223,18 +236,16 @@ export async function getLivePositionPnL(symbol) {
         ? currentPrice - entryPrice
         : entryPrice - currentPrice
       const pnl = priceDiff * lots * contractSize
-
       return {
         pnl:          parseFloat(pnl.toFixed(2)),
         currentPrice: parseFloat(currentPrice.toFixed(2)),
-        entryPrice,
-        side, lots,
+        entryPrice,   side, lots,
         riskAmount:   tradeInfo?.riskAmount ?? 0,
         durationMin,
       }
     }
 
-    // Fallback: Balance-Differenz vom Trade-Start
+    // Fallback: Balance-Differenz
     if (tradeInfo?.balanceAtOpen) {
       const balanceNow = await getLiveBalance()
       if (balanceNow !== null) {
@@ -242,8 +253,7 @@ export async function getLivePositionPnL(symbol) {
         return {
           pnl,
           currentPrice: 'N/A',
-          entryPrice,
-          side, lots,
+          entryPrice,   side, lots,
           riskAmount:   tradeInfo?.riskAmount ?? 0,
           durationMin,
         }
@@ -257,6 +267,9 @@ export async function getLivePositionPnL(symbol) {
   }
 }
 
+// ================================
+// P&L AUS BALANCE DIFFERENZ
+// ================================
 async function calculatePnL(balanceBefore) {
   try {
     await new Promise(r => setTimeout(r, 1500))
@@ -271,6 +284,9 @@ async function calculatePnL(balanceBefore) {
   }
 }
 
+// ================================
+// POSITION SCHLIESSEN
+// ================================
 async function closePosition(symbol, cachedPos = null) {
   const position = cachedPos ?? await getOpenPosition(symbol)
   if (!position) {
@@ -303,8 +319,8 @@ async function closePosition(symbol, cachedPos = null) {
     const s = getState()
     await sendTradeClose({
       symbol,
-      side:           tradeInfo?.side      ?? position.side,
-      lots:           tradeInfo?.lots      ?? position.qty,
+      side:           tradeInfo?.side       ?? position.side,
+      lots:           tradeInfo?.lots       ?? position.qty,
       entryPrice:     tradeInfo?.entryPrice ?? '—',
       exitPrice:      balanceAfter?.toFixed(2) ?? '—',
       pnl,
@@ -332,6 +348,9 @@ async function closePosition(symbol, cachedPos = null) {
   return true
 }
 
+// ================================
+// HAUPTFUNKTION — mit doppeltem Schutz
+// ================================
 export async function handleSignal(position, symbol, skipClose = false, cachedPos = null) {
   try {
     if (!accessToken) await init()
@@ -339,11 +358,22 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
     console.log(`[TL] Signal: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
 
     if (position === 'long') {
-      if (!skipClose) await closePosition(symbol, cachedPos)
+      // FIX: Immer auf offene Position prüfen — auch wenn skipClose=true
+      // Schützt vor doppelten Positionen bei JWT Re-Login
+      const existing = await getOpenPosition(symbol)
+      if (existing) {
+        console.log(`[TL] Bestehende Position gefunden — schließe zuerst`)
+        await closePosition(symbol, existing)
+      }
       await placeOrder('buy', symbol)
     }
     else if (position === 'short') {
-      if (!skipClose) await closePosition(symbol, cachedPos)
+      // FIX: Gleicher Schutz für Short
+      const existing = await getOpenPosition(symbol)
+      if (existing) {
+        console.log(`[TL] Bestehende Position gefunden — schließe zuerst`)
+        await closePosition(symbol, existing)
+      }
       await placeOrder('sell', symbol)
     }
     else if (position === 'flat') {
@@ -356,14 +386,21 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
   } catch (err) {
     console.error('[TL] Fehler:', err.response?.data || err.message)
     await sendErrorNotification(err.message, `handleSignal(${position}, ${symbol})`)
+
     if (err.response?.status === 401) {
+      console.log('[TL] Token abgelaufen — neu einloggen...')
       accessToken = null
       await init()
-      await handleSignal(position, symbol, skipClose, cachedPos)
+      // FIX: Nach Re-Login immer skipClose=false und cachedPos=null
+      // damit die Position-Prüfung oben frisch läuft
+      await handleSignal(position, symbol, false, null)
     }
   }
 }
 
+// ================================
+// DASHBOARD
+// ================================
 export async function triggerDashboard() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -371,12 +408,18 @@ export async function triggerDashboard() {
   await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
+// ================================
+// TRADE HISTORY
+// ================================
 export async function triggerTradeHistory() {
   if (!accessToken) await init()
   const { last10Trades } = getState()
   await sendTradeHistory(last10Trades)
 }
 
+// ================================
+// DEBUG
+// ================================
 export async function debugBalance() {
   if (!accessToken) await init()
   const results   = {}
@@ -411,7 +454,7 @@ export async function getDebugInfo() {
   return {
     accountId, accNum, liveBalance,
     totalInstruments: instrumentMap.size,
-    riskState:  getState(),
+    riskState:   getState(),
     activeTrades: Object.fromEntries(activeTrades),
   }
 }
