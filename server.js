@@ -5,9 +5,6 @@ import { answerCallbackQuery, sendMessage } from './utils/telegram.js'
 const app = express()
 app.use(express.json())
 
-// ================================
-// TRADINGVIEW WEBHOOK
-// ================================
 app.post('/webhook', async (req, res) => {
   console.log('[WEBHOOK] Empfangen:', req.body)
   let { position, symbol } = req.body
@@ -38,38 +35,32 @@ app.post('/webhook', async (req, res) => {
   })
 })
 
-// ================================
-// TELEGRAM COMMANDS + CALLBACKS
-// ================================
 app.post('/telegram', async (req, res) => {
   res.json({ ok: true })
 
   const body = req.body
 
-  // Callback Query — Button gedrückt
   if (body.callback_query) {
-    const query    = body.callback_query
-    const data     = query.data || ''
-    const queryId  = query.id
-    const chatId   = query.message?.chat?.id
-    const msgId    = query.message?.message_id
+    const query   = body.callback_query
+    const data    = query.data || ''
+    const queryId = query.id
 
     console.log('[TG] Callback:', data)
 
-    // PnL Snapshot Button: pnl_SYMBOL
     if (data.startsWith('pnl_')) {
       const symbol = data.replace('pnl_', '')
       try {
         const pnlData = await getLivePositionPnL(symbol)
         if (pnlData) {
-          const pnlStr  = pnlData.pnl >= 0
+          const pnlStr = pnlData.pnl >= 0
             ? `+$${pnlData.pnl.toFixed(2)}`
             : `-$${Math.abs(pnlData.pnl).toFixed(2)}`
-          const emoji   = pnlData.pnl >= 0 ? '🟢' : '🔴'
-          const pct     = ((pnlData.pnl / pnlData.riskAmount) * 100).toFixed(1)
-
+          const emoji = pnlData.pnl >= 0 ? '🟢' : '🔴'
+          const dur   = pnlData.durationMin !== null
+            ? `${Math.floor(pnlData.durationMin / 60)}h ${pnlData.durationMin % 60}min`
+            : '—'
           await answerCallbackQuery(queryId,
-            `${emoji} ${symbol} | P&L: ${pnlStr} (${pct}% des Risks) | Preis: ${pnlData.currentPrice}`
+            `${emoji} ${symbol} | P&L: ${pnlStr} | Preis: ${pnlData.currentPrice} | Dauer: ${dur}`
           )
         } else {
           await answerCallbackQuery(queryId, '⚠️ Keine offene Position gefunden')
@@ -77,15 +68,11 @@ app.post('/telegram', async (req, res) => {
       } catch (err) {
         await answerCallbackQuery(queryId, '❌ Fehler beim Abrufen')
       }
-      return
     }
-
     return
   }
 
-  // Text Commands
-  const text   = body?.message?.text || ''
-  const chatId = body?.message?.chat?.id
+  const text = body?.message?.text || ''
   console.log('[TG] Command:', text)
 
   if (text === '/d') {
@@ -112,9 +99,6 @@ Drücke den <b>📊 PnL</b> Button unter der Entry-Nachricht für einen Live-Sna
   }
 })
 
-// ================================
-// DEBUG ROUTES
-// ================================
 app.get('/debug', async (req, res) => {
   try {
     const { getDebugInfo } = await import('./utils/tradelocker.js')
