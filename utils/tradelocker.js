@@ -33,9 +33,6 @@ let accNum      = null
 const instrumentMap = new Map()
 const activeTrades  = new Map()
 
-// ================================
-// AUTH
-// ================================
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
@@ -77,9 +74,6 @@ async function loadAllInstruments() {
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
-// ================================
-// LIVE BALANCE
-// ================================
 export async function getLiveBalance() {
   try {
     const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
@@ -97,9 +91,6 @@ export async function getLiveBalance() {
   }
 }
 
-// ================================
-// INIT
-// ================================
 async function init() {
   await login()
   await loadAccount()
@@ -115,9 +106,6 @@ function getInstrument(symbol) {
   return instrument
 }
 
-// ================================
-// ORDER PLATZIEREN — lots kommt direkt aus Webhook
-// ================================
 async function placeOrder(side, symbol, lots) {
   const { instrumentId, routeId } = getInstrument(symbol)
   console.log(`[TL] Order: ${side} ${symbol} | Lots: ${lots}`)
@@ -149,7 +137,6 @@ async function placeOrder(side, symbol, lots) {
     lots,
     openTime:     Date.now(),
     contractSize: CONTRACT_SIZES[symbol] || CONTRACT_SIZES.DEFAULT,
-    riskAmount:   INITIAL_CAPITAL * 0.02,
     balanceAtOpen,
   })
 
@@ -157,9 +144,6 @@ async function placeOrder(side, symbol, lots) {
   return res.data
 }
 
-// ================================
-// OFFENE POSITION HOLEN
-// ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -192,9 +176,6 @@ export async function getOpenPositionData(symbol) {
   }
 }
 
-// ================================
-// LIVE PNL SNAPSHOT
-// ================================
 export async function getLivePositionPnL(symbol) {
   try {
     if (!accessToken) await init()
@@ -239,7 +220,6 @@ export async function getLivePositionPnL(symbol) {
         pnl:          parseFloat(pnl.toFixed(2)),
         currentPrice: parseFloat(currentPrice.toFixed(2)),
         entryPrice,   side, lots,
-        riskAmount:   tradeInfo?.riskAmount ?? 0,
         durationMin,
       }
     }
@@ -253,7 +233,6 @@ export async function getLivePositionPnL(symbol) {
           pnl,
           currentPrice: 'N/A',
           entryPrice,   side, lots,
-          riskAmount:   tradeInfo?.riskAmount ?? 0,
           durationMin,
         }
       }
@@ -266,9 +245,6 @@ export async function getLivePositionPnL(symbol) {
   }
 }
 
-// ================================
-// P&L AUS BALANCE DIFFERENZ
-// ================================
 async function calculatePnL(balanceBefore) {
   try {
     await new Promise(r => setTimeout(r, 1500))
@@ -283,9 +259,6 @@ async function calculatePnL(balanceBefore) {
   }
 }
 
-// ================================
-// POSITION SCHLIESSEN
-// ================================
 async function closePosition(symbol, cachedPos = null) {
   const position = cachedPos ?? await getOpenPosition(symbol)
   if (!position) {
@@ -328,10 +301,6 @@ async function closePosition(symbol, cachedPos = null) {
       totalTrades:    s.tradeCount,
       winrate:        s.totalWinrate,
       last3:          s.last3Trades,
-      riskPercent:    s.currentRiskPercent,
-      nextLots:       s.nextLotSize,
-      hardCap:        s.hardCapActive,
-      recoveryBoost:  s.recoveryBoostActive,
       tradingBalance: s.tradingBalance,
       savingsBalance: s.savingsBalance,
       liveBalance:    balanceAfter,
@@ -347,9 +316,6 @@ async function closePosition(symbol, cachedPos = null) {
   return true
 }
 
-// ================================
-// HAUPTFUNKTION — lots als Parameter
-// ================================
 export async function handleSignal(position, symbol, skipClose = false, cachedPos = null, lots = 0.01) {
   try {
     if (!accessToken) await init()
@@ -400,9 +366,6 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
   }
 }
 
-// ================================
-// DASHBOARD
-// ================================
 export async function triggerDashboard() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -410,18 +373,12 @@ export async function triggerDashboard() {
   await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
-// ================================
-// TRADE HISTORY
-// ================================
 export async function triggerTradeHistory() {
   if (!accessToken) await init()
   const { last10Trades } = getState()
   await sendTradeHistory(last10Trades)
 }
 
-// ================================
-// DEBUG
-// ================================
 export async function debugBalance() {
   if (!accessToken) await init()
   const results   = {}
