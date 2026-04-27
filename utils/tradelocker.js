@@ -15,7 +15,6 @@ const PASSWORD        = process.env.TL_PASSWORD
 const SERVER          = process.env.TL_SERVER
 const INITIAL_CAPITAL = parseFloat(process.env.INITIAL_CAPITAL || '5000')
 
-// Contract sizes pro Lot
 const CONTRACT_SIZES = {
   US100:   1, NAS100: 1,
   US500:   1, SPX500: 1,
@@ -31,14 +30,9 @@ let accessToken = null
 let accountId   = null
 let accNum      = null
 
-const instrumentMap = new Map()
+const instrumentMap  = new Map()
+const activeTrades   = new Map()
 
-// Speichert aktive Trade-Info für PnL Snapshot und Trade-Close Details
-const activeTrades = new Map() // symbol → { entryPrice, side, lots, openTime, riskAmount }
-
-// ================================
-// AUTH
-// ================================
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
@@ -80,9 +74,6 @@ async function loadAllInstruments() {
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
-// ================================
-// LIVE BALANCE
-// ================================
 export async function getLiveBalance() {
   try {
     const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
@@ -100,9 +91,6 @@ export async function getLiveBalance() {
   }
 }
 
-// ================================
-// INIT
-// ================================
 async function init() {
   await login()
   await loadAccount()
@@ -118,9 +106,6 @@ function getInstrument(symbol) {
   return instrument
 }
 
-// ================================
-// ORDER PLATZIEREN
-// ================================
 async function placeOrder(side, symbol) {
   const { instrumentId, routeId } = getInstrument(symbol)
   const lots = getLotSize()
@@ -142,32 +127,26 @@ async function placeOrder(side, symbol) {
 
   console.log(`[TL] Order platziert:`, res.data)
 
-  // Kurz warten dann Entry-Preis aus offener Position holen
+  // Balance und Entry-Preis kurz nach Order holen
   await new Promise(r => setTimeout(r, 1000))
-  const openPos = await getOpenPosition(symbol)
-  const entryPrice = openPos?.price ?? null
+  const openPos       = await getOpenPosition(symbol)
+  const entryPrice    = openPos?.price ? parseFloat(openPos.price) : null
+  const balanceAtOpen = await getLiveBalance()
 
-  // Trade-Info speichern für spätere PnL-Abfragen
-  const contractSize = CONTRACT_SIZES[symbol] || CONTRACT_SIZES.DEFAULT
-  const riskPct      = parseFloat(process.env.INITIAL_CAPITAL || '5000') * 0.02
   activeTrades.set(symbol, {
     entryPrice,
     side,
     lots,
-    openTime: Date.now(),
-    contractSize,
-    riskAmount: riskPct,
+    openTime:     Date.now(),
+    contractSize: CONTRACT_SIZES[symbol] || CONTRACT_SIZES.DEFAULT,
+    riskAmount:   INITIAL_CAPITAL * 0.02,
+    balanceAtOpen,
   })
 
-  // Telegram Nachricht mit Button
   await sendOpenWithButton(symbol, side, lots, entryPrice ?? '—')
-
   return res.data
 }
 
-// ================================
-// OFFENE POSITION HOLEN
-// ================================
 async function getOpenPosition(symbol) {
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -188,71 +167,6 @@ async function getOpenPosition(symbol) {
   }
 }
 
-// ================================
-// LIVE PNL SNAPSHOT — für Button
-// ================================
-export async function getLivePositionPnL(symbol) {
-  try {
-    if (!accessToken) await init()
-
-    const position    = await getOpenPosition(symbol)
-    if (!position) return null
-
-    const tradeInfo   = activeTrades.get(symbol)
-    const entryPrice  = tradeInfo?.entryPrice ?? parseFloat(position.price)
-    const lots        = parseFloat(position.qty)
-    const side        = position.side
-    const contractSize = CONTRACT_SIZES[symbol] || CONTRACT_SIZES.DEFAULT
-
-    // Aktuellen Preis holen
-    const { instrumentId } = getInstrument(symbol)
-    const priceRes = await axios.get(
-      `${BASE_URL}/trade/accounts/${accountId}/quotes`,
-      { headers: authHeaders() }
-    )
-
-    // Quotes kommen als Array — suche nach instrumentId
-    const quotes  = priceRes.data.d?.quotes || []
-    const fields  = priceRes.data.d?.fields || []
-    const instrIdx = fields.indexOf('tradableInstrumentId')
-    const bidIdx   = fields.indexOf('bid')
-    const askIdx   = fields.indexOf('ask')
-
-    const quote = quotes.find(q => String(q[instrIdx]) === String(instrumentId))
-    let currentPrice = entryPrice // Fallback
-
-    if (quote) {
-      currentPrice = side === 'buy'
-        ? parseFloat(quote[bidIdx])   // Long schließt auf Bid
-        : parseFloat(quote[askIdx])   // Short schließt auf Ask
-    }
-
-    // P&L berechnen
-    const priceDiff = side === 'buy'
-      ? currentPrice - entryPrice
-      : entryPrice - currentPrice
-
-    const pnl = priceDiff * lots * contractSize
-
-    const durationMin = tradeInfo
-      ? Math.round((Date.now() - tradeInfo.openTime) / 60000)
-      : null
-
-    return {
-      pnl:          parseFloat(pnl.toFixed(2)),
-      currentPrice: parseFloat(currentPrice.toFixed(5)),
-      entryPrice:   parseFloat(entryPrice),
-      side,
-      lots,
-      riskAmount:   tradeInfo?.riskAmount ?? 0,
-      durationMin,
-    }
-  } catch (err) {
-    console.error('[TL] PnL Snapshot Fehler:', err.message)
-    return null
-  }
-}
-
 export async function getOpenPositionData(symbol) {
   try {
     if (!accessToken) await init()
@@ -266,8 +180,83 @@ export async function getOpenPositionData(symbol) {
 }
 
 // ================================
-// P&L AUS BALANCE DIFFERENZ
+// LIVE PNL SNAPSHOT — Fallback via Balance-Differenz
 // ================================
+export async function getLivePositionPnL(symbol) {
+  try {
+    if (!accessToken) await init()
+
+    const position = await getOpenPosition(symbol)
+    if (!position) return null
+
+    const tradeInfo    = activeTrades.get(symbol)
+    const entryPrice   = tradeInfo?.entryPrice ?? parseFloat(position.price)
+    const lots         = parseFloat(position.qty)
+    const side         = position.side
+    const contractSize = CONTRACT_SIZES[symbol] || CONTRACT_SIZES.DEFAULT
+    const durationMin  = tradeInfo
+      ? Math.round((Date.now() - tradeInfo.openTime) / 60000)
+      : null
+
+    // Versuche Preis über depth Endpoint
+    let currentPrice = entryPrice
+    let gotPrice     = false
+
+    try {
+      const { instrumentId } = getInstrument(symbol)
+      const depthRes = await axios.get(
+        `${BASE_URL}/trade/accounts/${accountId}/instruments/${instrumentId}/depth`,
+        { headers: authHeaders() }
+      )
+      const bid = depthRes.data?.d?.bids?.[0]?.[0]
+      const ask = depthRes.data?.d?.asks?.[0]?.[0]
+      if (bid && ask) {
+        currentPrice = side === 'buy' ? parseFloat(bid) : parseFloat(ask)
+        gotPrice     = true
+      }
+    } catch {
+      // Depth nicht verfügbar
+    }
+
+    if (gotPrice) {
+      const priceDiff = side === 'buy'
+        ? currentPrice - entryPrice
+        : entryPrice - currentPrice
+      const pnl = priceDiff * lots * contractSize
+
+      return {
+        pnl:          parseFloat(pnl.toFixed(2)),
+        currentPrice: parseFloat(currentPrice.toFixed(2)),
+        entryPrice,
+        side, lots,
+        riskAmount:   tradeInfo?.riskAmount ?? 0,
+        durationMin,
+      }
+    }
+
+    // Fallback: Balance-Differenz vom Trade-Start
+    if (tradeInfo?.balanceAtOpen) {
+      const balanceNow = await getLiveBalance()
+      if (balanceNow !== null) {
+        const pnl = parseFloat((balanceNow - tradeInfo.balanceAtOpen).toFixed(2))
+        return {
+          pnl,
+          currentPrice: 'N/A',
+          entryPrice,
+          side, lots,
+          riskAmount:   tradeInfo?.riskAmount ?? 0,
+          durationMin,
+        }
+      }
+    }
+
+    return null
+  } catch (err) {
+    console.error('[TL] PnL Snapshot Fehler:', err.message)
+    return null
+  }
+}
+
 async function calculatePnL(balanceBefore) {
   try {
     await new Promise(r => setTimeout(r, 1500))
@@ -282,9 +271,6 @@ async function calculatePnL(balanceBefore) {
   }
 }
 
-// ================================
-// POSITION SCHLIESSEN
-// ================================
 async function closePosition(symbol, cachedPos = null) {
   const position = cachedPos ?? await getOpenPosition(symbol)
   if (!position) {
@@ -294,10 +280,11 @@ async function closePosition(symbol, cachedPos = null) {
 
   const balanceBefore = await getLiveBalance()
   const tradeInfo     = activeTrades.get(symbol)
-  const exitPrice     = null // Wird aus Balance-Differenz abgeleitet
-  const openTime      = tradeInfo?.openTime ?? Date.now()
-  const durationMin   = Math.round((Date.now() - openTime) / 60000)
+  const durationMin   = tradeInfo
+    ? Math.round((Date.now() - tradeInfo.openTime) / 60000)
+    : null
 
+  console.log(`[TL] Balance vor Close: $${balanceBefore}`)
   console.log(`[TL] Schließe Position ${position.id} für ${symbol}`)
 
   await axios.delete(
@@ -316,10 +303,10 @@ async function closePosition(symbol, cachedPos = null) {
     const s = getState()
     await sendTradeClose({
       symbol,
-      side:           tradeInfo?.side    ?? position.side,
-      lots:           tradeInfo?.lots    ?? position.qty,
+      side:           tradeInfo?.side      ?? position.side,
+      lots:           tradeInfo?.lots      ?? position.qty,
       entryPrice:     tradeInfo?.entryPrice ?? '—',
-      exitPrice:      balanceBefore ? (balanceBefore + pnl).toFixed(2) : '—',
+      exitPrice:      balanceAfter?.toFixed(2) ?? '—',
       pnl,
       result,
       durationMin,
@@ -336,7 +323,6 @@ async function closePosition(symbol, cachedPos = null) {
       initialCapital: INITIAL_CAPITAL,
     })
 
-    // Trade-Info aufräumen
     activeTrades.delete(symbol)
   } else {
     console.log('[TL] P&L nicht verfügbar')
@@ -346,9 +332,6 @@ async function closePosition(symbol, cachedPos = null) {
   return true
 }
 
-// ================================
-// HAUPTFUNKTION
-// ================================
 export async function handleSignal(position, symbol, skipClose = false, cachedPos = null) {
   try {
     if (!accessToken) await init()
@@ -381,9 +364,6 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
   }
 }
 
-// ================================
-// DASHBOARD
-// ================================
 export async function triggerDashboard() {
   if (!accessToken) await init()
   const liveBalance = await getLiveBalance()
@@ -391,18 +371,12 @@ export async function triggerDashboard() {
   await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
-// ================================
-// TRADE HISTORY
-// ================================
 export async function triggerTradeHistory() {
   if (!accessToken) await init()
   const { last10Trades } = getState()
   await sendTradeHistory(last10Trades)
 }
 
-// ================================
-// DEBUG
-// ================================
 export async function debugBalance() {
   if (!accessToken) await init()
   const results   = {}
@@ -437,7 +411,7 @@ export async function getDebugInfo() {
   return {
     accountId, accNum, liveBalance,
     totalInstruments: instrumentMap.size,
-    riskState: getState(),
+    riskState:  getState(),
     activeTrades: Object.fromEntries(activeTrades),
   }
 }
