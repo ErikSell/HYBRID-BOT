@@ -349,7 +349,10 @@ async function closePosition(symbol, cachedPos = null) {
 }
 
 // ================================
-// HAUPTFUNKTION — mit doppeltem Schutz
+// HAUPTFUNKTION
+// FIX 1: cachedPos vom Webhook nutzen — kein extra API Call
+// FIX 2: Nach Re-Login immer skipClose=false + cachedPos=null
+// FIX 3: 429 Rate Limit Handler mit 3s Retry
 // ================================
 export async function handleSignal(position, symbol, skipClose = false, cachedPos = null) {
   try {
@@ -358,9 +361,8 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
     console.log(`[TL] Signal: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
 
     if (position === 'long') {
-      // FIX: Immer auf offene Position prüfen — auch wenn skipClose=true
-      // Schützt vor doppelten Positionen bei JWT Re-Login
-      const existing = await getOpenPosition(symbol)
+      // Cache nutzen wenn vorhanden, sonst nur abfragen wenn nötig
+      const existing = cachedPos ?? (skipClose ? null : await getOpenPosition(symbol))
       if (existing) {
         console.log(`[TL] Bestehende Position gefunden — schließe zuerst`)
         await closePosition(symbol, existing)
@@ -368,8 +370,7 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
       await placeOrder('buy', symbol)
     }
     else if (position === 'short') {
-      // FIX: Gleicher Schutz für Short
-      const existing = await getOpenPosition(symbol)
+      const existing = cachedPos ?? (skipClose ? null : await getOpenPosition(symbol))
       if (existing) {
         console.log(`[TL] Bestehende Position gefunden — schließe zuerst`)
         await closePosition(symbol, existing)
@@ -387,13 +388,21 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
     console.error('[TL] Fehler:', err.response?.data || err.message)
     await sendErrorNotification(err.message, `handleSignal(${position}, ${symbol})`)
 
+    // 401 — Token abgelaufen → Re-Login + Retry mit frischem State
     if (err.response?.status === 401) {
       console.log('[TL] Token abgelaufen — neu einloggen...')
       accessToken = null
       await init()
-      // FIX: Nach Re-Login immer skipClose=false und cachedPos=null
-      // damit die Position-Prüfung oben frisch läuft
       await handleSignal(position, symbol, false, null)
+      return
+    }
+
+    // 429 — Rate Limit → 3 Sekunden warten + Retry
+    if (err.response?.status === 429) {
+      console.log('[TL] Rate limit — warte 3 Sekunden...')
+      await new Promise(r => setTimeout(r, 3000))
+      await handleSignal(position, symbol, skipClose, cachedPos)
+      return
     }
   }
 }
@@ -454,7 +463,7 @@ export async function getDebugInfo() {
   return {
     accountId, accNum, liveBalance,
     totalInstruments: instrumentMap.size,
-    riskState:   getState(),
+    riskState:    getState(),
     activeTrades: Object.fromEntries(activeTrades),
   }
 }
