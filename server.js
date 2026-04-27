@@ -7,10 +7,20 @@ app.use(express.json())
 
 app.post('/webhook', async (req, res) => {
   console.log('[WEBHOOK] Empfangen:', req.body)
-  let { position, symbol } = req.body
+  let { position, symbol, qty } = req.body
 
   if (!position) return res.status(400).json({ error: 'Kein position-Feld' })
   if (!symbol)   return res.status(400).json({ error: 'Kein symbol-Feld' })
+
+  // qty → Lots umrechnen: 1.00 qty = 0.09 Lots
+  // Immer auf 2 Stellen ABSCHNEIDEN (nicht runden), Minimum 0.01
+  let lots = 0.01
+  if (qty && parseFloat(qty) > 0) {
+    const raw     = (parseFloat(qty) / 1.00) * 0.09
+    const floored = Math.floor(raw * 100) / 100
+    lots          = Math.max(0.01, floored)
+  }
+  console.log(`[WEBHOOK] qty: ${qty} → Lots: ${lots}`)
 
   let skipClose = false
   let cachedPos = null
@@ -27,10 +37,10 @@ app.post('/webhook', async (req, res) => {
     }
   }
 
-  console.log(`[WEBHOOK] Mapped: ${position} | Symbol: ${symbol} | skipClose: ${skipClose}`)
+  console.log(`[WEBHOOK] Mapped: ${position} | Symbol: ${symbol} | Lots: ${lots} | skipClose: ${skipClose}`)
   res.json({ ok: true })
 
-  handleSignal(position, symbol, skipClose, cachedPos).catch(err => {
+  handleSignal(position, symbol, skipClose, cachedPos, lots).catch(err => {
     console.error('[WEBHOOK] Async Fehler:', err.message)
   })
 })
@@ -94,7 +104,7 @@ app.post('/telegram', async (req, res) => {
 /help — Diese Übersicht
 
 <i>Während ein Trade offen ist:</i>
-Drücke den <b>📊 PnL</b> Button unter der Entry-Nachricht für einen Live-Snapshot.
+Drücke den <b>📊 PnL</b> Button für einen Live-Snapshot.
 `.trim())
   }
 })
@@ -133,5 +143,4 @@ app.get('/risk', async (req, res) => {
     res.json(getState())
   } catch (err) { res.json({ error: err.message }) }
 })
-
 app.listen(3000, () => console.log('[SERVER] Läuft auf Port 3000'))
