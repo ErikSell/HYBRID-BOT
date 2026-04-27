@@ -5,6 +5,9 @@ import { answerCallbackQuery, sendMessage } from './utils/telegram.js'
 const app = express()
 app.use(express.json())
 
+// ================================
+// TRADINGVIEW WEBHOOK
+// ================================
 app.post('/webhook', async (req, res) => {
   console.log('[WEBHOOK] Empfangen:', req.body)
   let { position, symbol, qty } = req.body
@@ -12,7 +15,7 @@ app.post('/webhook', async (req, res) => {
   if (!position) return res.status(400).json({ error: 'Kein position-Feld' })
   if (!symbol)   return res.status(400).json({ error: 'Kein symbol-Feld' })
 
-  // qty → Lots umrechnen: 1.00 qty = 0.09 Lots
+  // qty → Lots: 1.00 qty = 0.09 Lots
   // Immer auf 2 Stellen ABSCHNEIDEN (nicht runden), Minimum 0.01
   let lots = 0.01
   if (qty && parseFloat(qty) > 0) {
@@ -45,6 +48,9 @@ app.post('/webhook', async (req, res) => {
   })
 })
 
+// ================================
+// TELEGRAM COMMANDS + CALLBACKS
+// ================================
 app.post('/telegram', async (req, res) => {
   res.json({ ok: true })
 
@@ -109,6 +115,9 @@ Drücke den <b>📊 PnL</b> Button für einen Live-Snapshot.
   }
 })
 
+// ================================
+// DEBUG ROUTES
+// ================================
 app.get('/debug', async (req, res) => {
   try {
     const { getDebugInfo } = await import('./utils/tradelocker.js')
@@ -143,4 +152,5 @@ app.get('/risk', async (req, res) => {
     res.json(getState())
   } catch (err) { res.json({ error: err.message }) }
 })
+
 app.listen(3000, () => console.log('[SERVER] Läuft auf Port 3000'))
