@@ -15,11 +15,11 @@ app.post('/webhook', async (req, res) => {
   if (!position) return res.status(400).json({ error: 'Kein position-Feld' })
   if (!symbol)   return res.status(400).json({ error: 'Kein symbol-Feld' })
 
-  // qty → Lots: 1.00 qty = 0.09 Lots
+  // qty → Lots: 1.00 qty = 0.20 Lots (US30)
   // Immer auf 2 Stellen ABSCHNEIDEN (nicht runden), Minimum 0.01
   let lots = 0.01
   if (qty && parseFloat(qty) > 0) {
-    const raw     = (parseFloat(qty) / 1.00) * 0.09
+    const raw     = (parseFloat(qty) / 1.00) * 0.20
     const floored = Math.floor(raw * 100) / 100
     lots          = Math.max(0.01, floored)
   }
@@ -152,5 +152,4 @@ app.get('/risk', async (req, res) => {
     res.json(getState())
   } catch (err) { res.json({ error: err.message }) }
 })
-
 app.listen(3000, () => console.log('[SERVER] Läuft auf Port 3000'))
