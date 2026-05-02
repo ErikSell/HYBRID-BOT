@@ -26,20 +26,33 @@ const CONTRACT_SIZES = {
   DEFAULT: 1,
 }
 
-let accessToken = null
-let accountId   = null
-let accNum      = null
+let accessToken   = null
+let accountId     = null
+let accNum        = null
+let tokenIssuedAt = null
 
 const instrumentMap = new Map()
 const activeTrades  = new Map()
 
+// ================================
+// AUTH
+// ================================
 async function login() {
   console.log('[TL] Logging in...')
   const res = await axios.post(`${BASE_URL}/auth/jwt/token`, {
     email: EMAIL, password: PASSWORD, server: SERVER,
   })
-  accessToken = res.data.accessToken
+  accessToken   = res.data.accessToken
+  tokenIssuedAt = Date.now()
   console.log('[TL] Login erfolgreich')
+}
+
+async function ensureValidToken() {
+  const fiftyMin = 50 * 60 * 1000
+  if (!accessToken || !tokenIssuedAt || (Date.now() - tokenIssuedAt) > fiftyMin) {
+    console.log('[TL] Token abgelaufen oder fehlt — erneuere...')
+    await login()
+  }
 }
 
 async function loadAccount() {
@@ -74,8 +87,12 @@ async function loadAllInstruments() {
   console.log(`[TL] ${instrumentMap.size} Instrumente geladen`)
 }
 
+// ================================
+// LIVE BALANCE
+// ================================
 export async function getLiveBalance() {
   try {
+    await ensureValidToken()
     const res = await axios.get(`${BASE_URL}/auth/jwt/all-accounts`, {
       headers: { Authorization: `Bearer ${accessToken}` }
     })
@@ -91,6 +108,9 @@ export async function getLiveBalance() {
   }
 }
 
+// ================================
+// INIT
+// ================================
 async function init() {
   await login()
   await loadAccount()
@@ -106,7 +126,11 @@ function getInstrument(symbol) {
   return instrument
 }
 
+// ================================
+// ORDER PLATZIEREN
+// ================================
 async function placeOrder(side, symbol, lots) {
+  await ensureValidToken()
   const { instrumentId, routeId } = getInstrument(symbol)
   console.log(`[TL] Order: ${side} ${symbol} | Lots: ${lots}`)
 
@@ -144,7 +168,11 @@ async function placeOrder(side, symbol, lots) {
   return res.data
 }
 
+// ================================
+// OFFENE POSITION HOLEN
+// ================================
 async function getOpenPosition(symbol) {
+  await ensureValidToken()
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
     { headers: authHeaders() }
@@ -166,7 +194,7 @@ async function getOpenPosition(symbol) {
 
 export async function getOpenPositionData(symbol) {
   try {
-    if (!accessToken) await init()
+    await ensureValidToken()
     const pos = await getOpenPosition(symbol)
     console.log(`[TL] getOpenPositionData(${symbol}):`, pos ? 'gefunden' : 'keine')
     return pos
@@ -176,9 +204,12 @@ export async function getOpenPositionData(symbol) {
   }
 }
 
+// ================================
+// LIVE PNL SNAPSHOT
+// ================================
 export async function getLivePositionPnL(symbol) {
   try {
-    if (!accessToken) await init()
+    await ensureValidToken()
 
     const position = await getOpenPosition(symbol)
     if (!position) return null
@@ -245,6 +276,9 @@ export async function getLivePositionPnL(symbol) {
   }
 }
 
+// ================================
+// P&L AUS BALANCE DIFFERENZ
+// ================================
 async function calculatePnL(balanceBefore) {
   try {
     await new Promise(r => setTimeout(r, 1500))
@@ -259,7 +293,11 @@ async function calculatePnL(balanceBefore) {
   }
 }
 
+// ================================
+// POSITION SCHLIESSEN
+// ================================
 async function closePosition(symbol, cachedPos = null) {
+  await ensureValidToken()
   const position = cachedPos ?? await getOpenPosition(symbol)
   if (!position) {
     console.log(`[TL] Keine offene Position für ${symbol}`)
@@ -316,9 +354,28 @@ async function closePosition(symbol, cachedPos = null) {
   return true
 }
 
-export async function handleSignal(position, symbol, skipClose = false, cachedPos = null, lots = 0.01) {
+// ================================
+// HAUPTFUNKTION
+// FIX: isRetry=true → nach 401 Re-Login nur schließen wenn Position offen
+// Verhindert ungewollte neue Entries nach Token-Fehler
+// ================================
+export async function handleSignal(position, symbol, skipClose = false, cachedPos = null, lots = 0.01, isRetry = false) {
   try {
-    if (!accessToken) await init()
+    await ensureValidToken()
+
+    // Nach Re-Login: Position frisch prüfen
+    // Wenn offen → nur schließen, kein neuer Entry
+    // Verhindert doppelte Positionen nach JWT Fehler
+    if (isRetry && (position === 'long' || position === 'short')) {
+      console.log(`[TL] Retry nach 401 — prüfe Position für ${symbol}`)
+      const freshPos = await getOpenPosition(symbol)
+      if (freshPos) {
+        console.log(`[TL] Offene Position gefunden nach Re-Login → nur schließen`)
+        await closePosition(symbol, freshPos)
+        return
+      }
+      console.log(`[TL] Keine offene Position nach Re-Login → normaler Entry`)
+    }
 
     console.log(`[TL] Signal: ${position} | Symbol: ${symbol} | Lots: ${lots} | skipClose: ${skipClose}`)
 
@@ -350,37 +407,48 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
     await sendErrorNotification(err.message, `handleSignal(${position}, ${symbol})`)
 
     if (err.response?.status === 401) {
-      console.log('[TL] Token abgelaufen — neu einloggen...')
-      accessToken = null
-      await init()
-      await handleSignal(position, symbol, false, null, lots)
+      console.log('[TL] 401 — Token force refresh...')
+      accessToken   = null
+      tokenIssuedAt = null
+      await login()
+      // isRetry=true → Signal wird sicher neu evaluiert
+      await handleSignal(position, symbol, false, null, lots, true)
       return
     }
 
     if (err.response?.status === 429) {
       console.log('[TL] Rate limit — warte 3 Sekunden...')
       await new Promise(r => setTimeout(r, 3000))
-      await handleSignal(position, symbol, skipClose, cachedPos, lots)
+      await handleSignal(position, symbol, skipClose, cachedPos, lots, isRetry)
       return
     }
   }
 }
 
+// ================================
+// DASHBOARD
+// ================================
 export async function triggerDashboard() {
-  if (!accessToken) await init()
+  await ensureValidToken()
   const liveBalance = await getLiveBalance()
   const state       = getState()
   await sendDashboard(liveBalance, INITIAL_CAPITAL, state)
 }
 
+// ================================
+// TRADE HISTORY
+// ================================
 export async function triggerTradeHistory() {
-  if (!accessToken) await init()
+  await ensureValidToken()
   const { last10Trades } = getState()
   await sendTradeHistory(last10Trades)
 }
 
+// ================================
+// DEBUG
+// ================================
 export async function debugBalance() {
-  if (!accessToken) await init()
+  await ensureValidToken()
   const results   = {}
   const endpoints = [
     `/trade/accounts/${accountId}/accountDetails`,
@@ -399,7 +467,7 @@ export async function debugBalance() {
 }
 
 export async function debugHistory() {
-  if (!accessToken) await init()
+  await ensureValidToken()
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/ordersHistory`,
     { headers: authHeaders() }
@@ -408,7 +476,7 @@ export async function debugHistory() {
 }
 
 export async function getDebugInfo() {
-  if (!accessToken) await init()
+  await ensureValidToken()
   const liveBalance = await getLiveBalance()
   return {
     accountId, accNum, liveBalance,
@@ -419,7 +487,7 @@ export async function getDebugInfo() {
 }
 
 export async function getPositionDebug() {
-  if (!accessToken) await init()
+  await ensureValidToken()
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
     { headers: authHeaders() }
