@@ -196,6 +196,7 @@ async function getOpenPosition(symbol) {
     side:  match[3],
     qty:   match[4],
     price: match[5],
+    pnl:   match[9],  // ← Index 9 = aktueller P&L
   }
 }
 
@@ -212,106 +213,42 @@ export async function getOpenPositionData(symbol) {
 }
 
 // ================================
-// LIVE PNL SNAPSHOT — 3 Versuche
+// LIVE PNL SNAPSHOT — nutzt Position[9] direkt
 // ================================
 export async function getLivePositionPnL(symbol) {
   try {
     await ensureValidToken()
 
-    const position = await getOpenPosition(symbol)
-    if (!position) return null
+    const { instrumentId } = getInstrument(symbol)
+    const res       = await axios.get(
+      `${BASE_URL}/trade/accounts/${accountId}/positions`,
+      { headers: authHeaders() }
+    )
+    const positions = res.data.d?.positions || []
+    const match     = positions.find(pos => String(pos[1]) === String(instrumentId))
+    if (!match) return null
 
-    const tradeInfo    = activeTrades.get(symbol)
-    const entryPrice   = tradeInfo?.entryPrice ?? parseFloat(position.price)
-    const lots         = parseFloat(position.qty)
-    const side         = position.side
-    const contractSize = CONTRACT_SIZES[symbol] || CONTRACT_SIZES.DEFAULT
-    const durationMin  = tradeInfo
+    const tradeInfo   = activeTrades.get(symbol)
+    const entryPrice  = parseFloat(match[5])
+    const lots        = parseFloat(match[4])
+    const side        = match[3]
+    const durationMin = tradeInfo
       ? Math.round((Date.now() - tradeInfo.openTime) / 60000)
       : null
 
-    let currentPrice = null
-    let gotPrice     = false
+    // Index 9 = aktueller P&L direkt aus TradeLocker
+    const pnl = match[9] !== null && match[9] !== undefined
+      ? parseFloat(parseFloat(match[9]).toFixed(2))
+      : null
 
-    // Versuch 1: Depth Endpoint
-    try {
-      const { instrumentId } = getInstrument(symbol)
-      const depthRes = await axios.get(
-        `${BASE_URL}/trade/accounts/${accountId}/instruments/${instrumentId}/depth`,
-        { headers: authHeaders() }
-      )
-      const bid = depthRes.data?.d?.bids?.[0]?.[0]
-      const ask = depthRes.data?.d?.asks?.[0]?.[0]
-      if (bid && ask) {
-        currentPrice = side === 'buy' ? parseFloat(bid) : parseFloat(ask)
-        gotPrice     = true
-        console.log(`[TL] PnL Preis via depth: ${currentPrice}`)
-      }
-    } catch {
-      // Depth nicht verfügbar
-    }
-
-    // Versuch 2: Preis aus roher Positions-Antwort
-    if (!gotPrice) {
-      try {
-        const { instrumentId } = getInstrument(symbol)
-        const posRes    = await axios.get(
-          `${BASE_URL}/trade/accounts/${accountId}/positions`,
-          { headers: authHeaders() }
-        )
-        const positions = posRes.data.d?.positions || []
-        const match     = positions.find(pos => String(pos[1]) === String(instrumentId))
-        if (match) {
-          // Alle Indices loggen damit wir den richtigen finden
-          console.log('[TL] Position raw array:', JSON.stringify(match))
-          // Index 5 = entry price, suche nach einem anderen Preis-Wert
-          const numericValues = match
-            .map((v, i) => ({ i, v: parseFloat(v) }))
-            .filter(x => !isNaN(x.v) && x.v > 100)
-          console.log('[TL] Numerische Werte > 100:', JSON.stringify(numericValues))
-          if (match[5] && parseFloat(match[5]) > 0) {
-            currentPrice = parseFloat(match[5])
-            gotPrice     = true
-            console.log(`[TL] PnL Preis via positions[5]: ${currentPrice}`)
-          }
-        }
-      } catch (e) {
-        console.log('[TL] Positions Preis Fehler:', e.message)
-      }
-    }
-
-    // Versuch 3: Balance-Differenz
-    if (!gotPrice) {
-      if (tradeInfo?.balanceAtOpen) {
-        const balanceNow = await getLiveBalance()
-        if (balanceNow !== null) {
-          const pnl = parseFloat((balanceNow - tradeInfo.balanceAtOpen).toFixed(2))
-          console.log(`[TL] PnL via Balance-Diff: ${pnl}`)
-          return {
-            pnl,
-            currentPrice: 'N/A',
-            entryPrice,   side, lots,
-            durationMin,
-          }
-        }
-      }
-      return {
-        pnl:          null,
-        currentPrice: 'N/A',
-        entryPrice,   side, lots,
-        durationMin,
-      }
-    }
-
-    const priceDiff = side === 'buy'
-      ? currentPrice - entryPrice
-      : entryPrice - currentPrice
-    const pnl = priceDiff * lots * contractSize
+    console.log(`[TL] PnL via Position[9]: ${pnl}`)
 
     return {
-      pnl:          parseFloat(pnl.toFixed(2)),
-      currentPrice: parseFloat(currentPrice.toFixed(2)),
-      entryPrice,   side, lots,
+      pnl,
+      currentPrice: 'live',
+      entryPrice,
+      side,
+      lots,
       durationMin,
     }
 
@@ -534,26 +471,19 @@ export async function getPositionDebug() {
   return res.data
 }
 
-// ================================
-// DEBUG RAW POSITIONS — temporär für PnL Debugging
-// Zeigt komplette rohe Position-Daten mit allen Indices
-// ================================
 export async function debugRawPositions() {
   await ensureValidToken()
-  const res = await axios.get(
+  const res       = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
     { headers: authHeaders() }
   )
   const raw       = res.data
   const positions = raw.d?.positions || []
-
-  // Jeden Index mit Wert auflisten für alle Positionen
-  const parsed = positions.map(pos => {
+  const parsed    = positions.map(pos => {
     const indexed = {}
     pos.forEach((val, i) => { indexed[`[${i}]`] = val })
     return indexed
   })
-
   return {
     raw,
     parsed,
