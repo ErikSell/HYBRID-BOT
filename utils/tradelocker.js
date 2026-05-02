@@ -532,5 +532,14 @@ export async function getPositionDebug() {
 
 init().catch(async err => {
   console.error('[TL] Init fehlgeschlagen:', err.message)
+  export async function debugRawPositions() {
+  await ensureValidToken()
+  const res = await axios.get(
+    `${BASE_URL}/trade/accounts/${accountId}/positions`,
+    { headers: authHeaders() }
+  )
+  // Rohe Antwort komplett zurückgeben
+  return res.data
+}
   await sendErrorNotification(err.message, 'init()')
 })
