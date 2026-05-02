@@ -21,8 +21,15 @@ const CONTRACT_SIZES = {
   US30:    1, DJ30:   1,
   XAUUSD:  100,
   XAGUSD:  5000,
+  BTCUSD:  1,
+  ETHUSD:  1,
   EURUSD:  100000,
   GBPUSD:  100000,
+  USDJPY:  100000,
+  USDCHF:  100000,
+  USDCAD:  100000,
+  AUDUSD:  100000,
+  NZDUSD:  100000,
   DEFAULT: 1,
 }
 
@@ -205,7 +212,7 @@ export async function getOpenPositionData(symbol) {
 }
 
 // ================================
-// LIVE PNL SNAPSHOT
+// LIVE PNL SNAPSHOT — 3 Versuche
 // ================================
 export async function getLivePositionPnL(symbol) {
   try {
@@ -223,9 +230,10 @@ export async function getLivePositionPnL(symbol) {
       ? Math.round((Date.now() - tradeInfo.openTime) / 60000)
       : null
 
-    let currentPrice = entryPrice
+    let currentPrice = null
     let gotPrice     = false
 
+    // Versuch 1: Depth Endpoint
     try {
       const { instrumentId } = getInstrument(symbol)
       const depthRes = await axios.get(
@@ -237,39 +245,70 @@ export async function getLivePositionPnL(symbol) {
       if (bid && ask) {
         currentPrice = side === 'buy' ? parseFloat(bid) : parseFloat(ask)
         gotPrice     = true
+        console.log(`[TL] PnL Preis via depth: ${currentPrice}`)
       }
     } catch {
       // Depth nicht verfügbar
     }
 
-    if (gotPrice) {
-      const priceDiff = side === 'buy'
-        ? currentPrice - entryPrice
-        : entryPrice - currentPrice
-      const pnl = priceDiff * lots * contractSize
+    // Versuch 2: Preis direkt aus Position (Index 5 = aktueller Preis)
+    if (!gotPrice) {
+      try {
+        await ensureValidToken()
+        const { instrumentId } = getInstrument(symbol)
+        const posRes    = await axios.get(
+          `${BASE_URL}/trade/accounts/${accountId}/positions`,
+          { headers: authHeaders() }
+        )
+        const positions = posRes.data.d?.positions || []
+        const match     = positions.find(pos => String(pos[1]) === String(instrumentId))
+        if (match && match[5] && parseFloat(match[5]) > 0) {
+          currentPrice = parseFloat(match[5])
+          gotPrice     = true
+          console.log(`[TL] PnL Preis via positions: ${currentPrice}`)
+        }
+      } catch {
+        // Positions-Preis nicht verfügbar
+      }
+    }
+
+    // Versuch 3: Balance-Differenz als Fallback
+    if (!gotPrice) {
+      if (tradeInfo?.balanceAtOpen) {
+        const balanceNow = await getLiveBalance()
+        if (balanceNow !== null) {
+          const pnl = parseFloat((balanceNow - tradeInfo.balanceAtOpen).toFixed(2))
+          console.log(`[TL] PnL via Balance-Diff: ${pnl}`)
+          return {
+            pnl,
+            currentPrice: 'N/A',
+            entryPrice,   side, lots,
+            durationMin,
+          }
+        }
+      }
+      // Kein Preis verfügbar — nur Dauer zurückgeben
       return {
-        pnl:          parseFloat(pnl.toFixed(2)),
-        currentPrice: parseFloat(currentPrice.toFixed(2)),
+        pnl:          null,
+        currentPrice: 'N/A',
         entryPrice,   side, lots,
         durationMin,
       }
     }
 
-    // Fallback: Balance-Differenz
-    if (tradeInfo?.balanceAtOpen) {
-      const balanceNow = await getLiveBalance()
-      if (balanceNow !== null) {
-        const pnl = parseFloat((balanceNow - tradeInfo.balanceAtOpen).toFixed(2))
-        return {
-          pnl,
-          currentPrice: 'N/A',
-          entryPrice,   side, lots,
-          durationMin,
-        }
-      }
+    // Preis vorhanden → P&L berechnen
+    const priceDiff = side === 'buy'
+      ? currentPrice - entryPrice
+      : entryPrice - currentPrice
+    const pnl = priceDiff * lots * contractSize
+
+    return {
+      pnl:          parseFloat(pnl.toFixed(2)),
+      currentPrice: parseFloat(currentPrice.toFixed(2)),
+      entryPrice,   side, lots,
+      durationMin,
     }
 
-    return null
   } catch (err) {
     console.error('[TL] PnL Snapshot Fehler:', err.message)
     return null
@@ -356,8 +395,6 @@ async function closePosition(symbol, cachedPos = null) {
 
 // ================================
 // HAUPTFUNKTION
-// FIX: isRetry=true → nach 401 Re-Login nur schließen wenn Position offen
-// Verhindert ungewollte neue Entries nach Token-Fehler
 // ================================
 export async function handleSignal(position, symbol, skipClose = false, cachedPos = null, lots = 0.01, isRetry = false) {
   try {
@@ -365,7 +402,6 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
 
     // Nach Re-Login: Position frisch prüfen
     // Wenn offen → nur schließen, kein neuer Entry
-    // Verhindert doppelte Positionen nach JWT Fehler
     if (isRetry && (position === 'long' || position === 'short')) {
       console.log(`[TL] Retry nach 401 — prüfe Position für ${symbol}`)
       const freshPos = await getOpenPosition(symbol)
@@ -411,7 +447,6 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
       accessToken   = null
       tokenIssuedAt = null
       await login()
-      // isRetry=true → Signal wird sicher neu evaluiert
       await handleSignal(position, symbol, false, null, lots, true)
       return
     }
