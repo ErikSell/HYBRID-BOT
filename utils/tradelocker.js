@@ -251,10 +251,9 @@ export async function getLivePositionPnL(symbol) {
       // Depth nicht verfügbar
     }
 
-    // Versuch 2: Preis direkt aus Position (Index 5 = aktueller Preis)
+    // Versuch 2: Preis aus roher Positions-Antwort
     if (!gotPrice) {
       try {
-        await ensureValidToken()
         const { instrumentId } = getInstrument(symbol)
         const posRes    = await axios.get(
           `${BASE_URL}/trade/accounts/${accountId}/positions`,
@@ -262,17 +261,26 @@ export async function getLivePositionPnL(symbol) {
         )
         const positions = posRes.data.d?.positions || []
         const match     = positions.find(pos => String(pos[1]) === String(instrumentId))
-        if (match && match[5] && parseFloat(match[5]) > 0) {
-          currentPrice = parseFloat(match[5])
-          gotPrice     = true
-          console.log(`[TL] PnL Preis via positions: ${currentPrice}`)
+        if (match) {
+          // Alle Indices loggen damit wir den richtigen finden
+          console.log('[TL] Position raw array:', JSON.stringify(match))
+          // Index 5 = entry price, suche nach einem anderen Preis-Wert
+          const numericValues = match
+            .map((v, i) => ({ i, v: parseFloat(v) }))
+            .filter(x => !isNaN(x.v) && x.v > 100)
+          console.log('[TL] Numerische Werte > 100:', JSON.stringify(numericValues))
+          if (match[5] && parseFloat(match[5]) > 0) {
+            currentPrice = parseFloat(match[5])
+            gotPrice     = true
+            console.log(`[TL] PnL Preis via positions[5]: ${currentPrice}`)
+          }
         }
-      } catch {
-        // Positions-Preis nicht verfügbar
+      } catch (e) {
+        console.log('[TL] Positions Preis Fehler:', e.message)
       }
     }
 
-    // Versuch 3: Balance-Differenz als Fallback
+    // Versuch 3: Balance-Differenz
     if (!gotPrice) {
       if (tradeInfo?.balanceAtOpen) {
         const balanceNow = await getLiveBalance()
@@ -287,7 +295,6 @@ export async function getLivePositionPnL(symbol) {
           }
         }
       }
-      // Kein Preis verfügbar — nur Dauer zurückgeben
       return {
         pnl:          null,
         currentPrice: 'N/A',
@@ -296,7 +303,6 @@ export async function getLivePositionPnL(symbol) {
       }
     }
 
-    // Preis vorhanden → P&L berechnen
     const priceDiff = side === 'buy'
       ? currentPrice - entryPrice
       : entryPrice - currentPrice
@@ -400,8 +406,6 @@ export async function handleSignal(position, symbol, skipClose = false, cachedPo
   try {
     await ensureValidToken()
 
-    // Nach Re-Login: Position frisch prüfen
-    // Wenn offen → nur schließen, kein neuer Entry
     if (isRetry && (position === 'long' || position === 'short')) {
       console.log(`[TL] Retry nach 401 — prüfe Position für ${symbol}`)
       const freshPos = await getOpenPosition(symbol)
@@ -530,16 +534,37 @@ export async function getPositionDebug() {
   return res.data
 }
 
-init().catch(async err => {
-  console.error('[TL] Init fehlgeschlagen:', err.message)
-  export async function debugRawPositions() {
+// ================================
+// DEBUG RAW POSITIONS — temporär für PnL Debugging
+// Zeigt komplette rohe Position-Daten mit allen Indices
+// ================================
+export async function debugRawPositions() {
   await ensureValidToken()
   const res = await axios.get(
     `${BASE_URL}/trade/accounts/${accountId}/positions`,
     { headers: authHeaders() }
   )
-  // Rohe Antwort komplett zurückgeben
-  return res.data
+  const raw       = res.data
+  const positions = raw.d?.positions || []
+
+  // Jeden Index mit Wert auflisten für alle Positionen
+  const parsed = positions.map(pos => {
+    const indexed = {}
+    pos.forEach((val, i) => { indexed[`[${i}]`] = val })
+    return indexed
+  })
+
+  return {
+    raw,
+    parsed,
+    activeTrades: Object.fromEntries(activeTrades),
+  }
 }
+
+// ================================
+// START
+// ================================
+init().catch(async err => {
+  console.error('[TL] Init fehlgeschlagen:', err.message)
   await sendErrorNotification(err.message, 'init()')
 })
